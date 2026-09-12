@@ -5,10 +5,12 @@
 用 raw.githubusercontent.com 提供下载，不经 GitHub Releases。
 
 用法（在仓库根目录执行）：
-    python .github/scripts/publish-single.py <module_dir> <artifact_dir>
+    python3 .github/scripts/publish-single.py <module_dir> <artifact_dir>
 
-    <module_dir>    源码模块目录，含 keiyoushi-source-info.json 与 res/ 图标
-    <artifact_dir>  构建产物目录，含 build/outputs/{apk,jar}/release/*
+    <module_dir>    源码模块目录（含 res/ 图标）
+    <artifact_dir>  download-artifact 解包目录（含 keiyoushi-source-info.json 与
+                    outputs/{apk,jar}/release/*；布局会因上传路径裁剪而异，
+                    本脚本用 glob 自适应）
 
 环境变量：
     SIGNING_KEY_FP  证书 SHA-256 指纹（十六进制）。缺省则索引不含 signingKey 字段，
@@ -25,6 +27,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import index_pb2  # noqa: E402
 from google.protobuf.json_format import MessageToJson  # noqa: E402
 
+import google.protobuf  # noqa: E402
+
 REPO_URL_BASE = "https://raw.githubusercontent.com/jldxnb/extensions-source/repo"
 SIGNING_KEY = os.environ.get("SIGNING_KEY_FP", "")
 REPO_NAME = "jldxnb 扩展仓库"
@@ -32,17 +36,34 @@ ICON_REL = "res/mipmap-xhdpi/ic_launcher.png"
 
 
 def main() -> None:
+    print(f"protobuf runtime: {google.protobuf.__version__}")
+
     module_dir = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path("module").resolve()
     art_dir = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else Path("artifacts").resolve()
     out_dir = Path("repo-out").resolve()
 
-    info = json.loads((module_dir / "keiyoushi-source-info.json").read_text(encoding="utf-8"))
+    print(f"module_dir = {module_dir}")
+    print(f"art_dir    = {art_dir}")
 
-    apk = next((art_dir / "build/outputs/apk/release").glob("*.apk"), None)
-    jar = next((art_dir / "build/outputs/jar/release").glob("*.jar"), None)
-    if apk is None or jar is None:
-        raise FileNotFoundError(f"构建产物中缺少 apk/jar：{art_dir}")
+    # --- 定位构建产物（上传时路径会被裁剪到最少公共祖先，用 glob 自适应）---
+    info_file = next(iter(sorted(art_dir.glob("**/keiyoushi-source-info.json"))), None)
+    apk = next(iter(sorted(art_dir.glob("**/*.apk"))), None)
+    jar = next(iter(sorted(art_dir.glob("**/*.jar"))), None)
+    if info_file is None or apk is None or jar is None:
+        raise FileNotFoundError(
+            f"构建产物不完整：info={info_file} apk={apk} jar={jar}\n"
+            f"  art_dir 下实际内容: "
+            f"{[str(p.relative_to(art_dir)) for p in art_dir.rglob('*')][:40]}"
+        )
+    print(f"info_file = {info_file}")
+    print(f"apk = {apk.name}  jar = {jar.name}")
 
+    info = json.loads(info_file.read_text(encoding="utf-8"))
+    print(f"info keys: {sorted(info.keys())}")
+    print(f"module={info['module']}  versionCode={info['versionCode']}  "
+          f"contentWarning={info['contentWarning']}")
+
+    # --- 布置 repo 目录 ---
     if out_dir.exists():
         shutil.rmtree(out_dir)
 
@@ -54,7 +75,8 @@ def main() -> None:
 
     shutil.copy2(apk, apk_out)
     shutil.copy2(jar, jar_out)
-    shutil.copy2(module_dir / ICON_REL, icon_out)
+    icon_src = module_dir / ICON_REL
+    shutil.copy2(icon_src, icon_out)
 
     def url(rel: Path) -> str:
         return f"{REPO_URL_BASE}/{rel.relative_to(out_dir).as_posix()}"
@@ -84,12 +106,11 @@ def main() -> None:
     )
 
     index = index_pb2.Index(
-        name=REPO_NAME,
+        name="jldxnb 扩展仓库",
         contact=index_pb2.Contact(website="https://github.com/jldxnb/extensions-source"),
         extensionList=index_pb2.ExtensionList(extensions=[ext]),
     )
     if SIGNING_KEY:
-        # signingKey 须放在 Index 上；proto 字段序无关紧要，这里按官方做法赋值
         index.signingKey = SIGNING_KEY
 
     (out_dir / "index.json").write_text(
@@ -103,7 +124,7 @@ def main() -> None:
     (out_dir / "index.pb").write_bytes(index.SerializeToString())
 
     print(f"✅ 已生成 {out_dir}")
-    print(f"   index.json / index.min.json / index.pb")
+    print("   index.json / index.min.json / index.pb")
     print(f"   apk : {apk.name}  sha256={hashlib.sha256(apk.read_bytes()).hexdigest()}")
     print(f"   jar : {jar.name}  sha256={hashlib.sha256(jar.read_bytes()).hexdigest()}")
     if SIGNING_KEY:

@@ -129,10 +129,28 @@ jobs:
         run: pip install -U protobuf
 
       - name: Generate index
+        id: genindex
+        continue-on-error: true
         run: |
+          set -o pipefail
           python3 .github/scripts/publish-single.py \
             'src/zh/jinmantiantang' \
-            'artifacts/src/zh/jinmantiantang/build'
+            'artifacts' 2>&1 | tee "$RUNNER_TEMP/publish.log"
+
+      # 与构建步骤同理：把失败摘要写进检查注解与 job summary，便于公开 API 读取
+      - name: Report publish failure
+        if: steps.genindex.outcome == 'failure'
+        run: |
+          EXCERPT=$(tail -40 "$RUNNER_TEMP/publish.log" | tr '\n' '%0A' | head -c 60000)
+          echo "::error title=Generate index failed::$EXCERPT"
+          {
+            echo "## ❌ 生成索引失败"
+            echo ""
+            echo '```text'
+            cat "$RUNNER_TEMP/publish.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
 
       - name: Deploy to repo branch
         run: |
