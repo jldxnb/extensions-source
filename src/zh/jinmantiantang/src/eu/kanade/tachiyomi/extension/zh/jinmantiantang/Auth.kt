@@ -186,11 +186,9 @@ internal fun addAuthPreferences(screen: PreferenceScreen, preferences: SharedPre
     // 点击监听器返回 true 以抑制默认的编辑对话框，使该项表现为只读的操作行。
     EditTextPreference(screen.context).apply {
         key = "jmLoginStatus"
-        title = if (preferences.getString(LOGGED_IN_HOST_PREF, "").isBlank()) {
-            "登录状态：未登录"
-        } else {
-            "登录状态：已登录（${preferences.getString(LOGGED_IN_HOST_PREF, "")}）"
-        }
+        // SharedPreferences.getString() 在 Kotlin 里返回 String?，必须处理可空性
+        val host = preferences.getString(LOGGED_IN_HOST_PREF, "").orEmpty()
+        title = if (host.isBlank()) "登录状态：未登录" else "登录状态：已登录（$host）"
         summary = "点击可清除登录状态，下次请求会重新登录"
         setOnBindEditTextListener { it.inputType = InputType.TYPE_NULL }
         setOnPreferenceClickListener {
