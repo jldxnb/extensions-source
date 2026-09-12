@@ -33,6 +33,10 @@ on:
       - 'gradle.properties'
   workflow_dispatch:
   workflow_call:
+    outputs:
+      signing_fingerprint:
+        description: '证书 SHA-256 指纹（未配置签名 secret 时为空）'
+        value: ${{ jobs.build.outputs.signing_fingerprint }}
 
 permissions:
   contents: write
