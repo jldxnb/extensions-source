@@ -3,7 +3,6 @@ package eu.kanade.tachiyomi.extension.zh.jinmantiantang
 import android.content.SharedPreferences
 import android.text.InputType
 import androidx.preference.EditTextPreference
-import androidx.preference.Preference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.network.POST
 import keiyoushi.utils.parseAs
@@ -181,10 +180,19 @@ internal fun addAuthPreferences(screen: PreferenceScreen, preferences: SharedPre
         }
     }.also(screen::addPreference)
 
-    Preference(screen.context).apply {
-        val host = preferences.getString(LOGGED_IN_HOST_PREF, "").orEmpty()
-        title = if (host.isBlank()) "登录状态：未登录" else "登录状态：已登录（$host）"
+    // 登录状态行。注意：这里刻意用 EditTextPreference 而非 androidx.preference.Preference ——
+    // 后者在本扩展的编译类路径上无法以 Preference(context) 形式构造（实测 CI 编译报
+    // "Too many arguments for 'constructor(): Preference'"），而其子类均可正常构造。
+    // 点击监听器返回 true 以抑制默认的编辑对话框，使该项表现为只读的操作行。
+    EditTextPreference(screen.context).apply {
+        key = "jmLoginStatus"
+        title = if (preferences.getString(LOGGED_IN_HOST_PREF, "").isBlank()) {
+            "登录状态：未登录"
+        } else {
+            "登录状态：已登录（${preferences.getString(LOGGED_IN_HOST_PREF, "")}）"
+        }
         summary = "点击可清除登录状态，下次请求会重新登录"
+        setOnBindEditTextListener { it.inputType = InputType.TYPE_NULL }
         setOnPreferenceClickListener {
             preferences.edit().remove(LOGGED_IN_HOST_PREF).apply()
             title = "登录状态：未登录"
