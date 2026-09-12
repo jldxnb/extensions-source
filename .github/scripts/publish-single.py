@@ -16,6 +16,7 @@
     SIGNING_KEY_FP  证书 SHA-256 指纹（十六进制）。缺省则索引不含 signingKey 字段，
                     宿主会把扩展标记为需要手动信任。
 """
+import gzip
 import hashlib
 import json
 import os
@@ -35,6 +36,36 @@ REPO_NAME = "jldxnb 扩展仓库"
 ICON_REL = "res/mipmap-xhdpi/ic_launcher.png"
 
 
+def pick_single(root: Path, suffix: str, what: str) -> Path:
+    """挑出唯一的 release 产物。
+
+    刻意不取"字典序第一个"：若构建同时产出 -release.apk 与 -release-unsigned.apk
+    （例如签名 secret 配错后回落），字典序会静默选到错的那个，最终发布一个装不上的包。
+    这里显式排除 unsigned，并且在有多个候选时直接报错要求人工判断，而不是猜。
+
+    注意 release 出现在**目录**上（outputs/apk/release/tachiyomi-*.apk），文件名里没有，
+    所以要按相对路径判断；万一路径被裁掉了 release，退回"所有非 unsigned 产物"。
+    """
+    all_files = sorted(
+        p for p in root.glob(f"**/*{suffix}") if "unsigned" not in p.name.lower()
+    )
+    if not all_files:
+        raise FileNotFoundError(
+            f"没有找到可发布的{what}（文件名不含 unsigned）。\n"
+            f"  {root} 下实际内容: "
+            f"{[str(p.relative_to(root)) for p in root.rglob('*')][:40]}"
+        )
+    preferred = [
+        p for p in all_files if "release" in p.relative_to(root).as_posix().lower()
+    ]
+    candidates = preferred or all_files
+    if len(candidates) > 1:
+        raise RuntimeError(
+            f"{what}有多个候选，无法确定发布哪一个：{[p.name for p in candidates]}"
+        )
+    return candidates[0]
+
+
 def main() -> None:
     print(f"protobuf runtime: {google.protobuf.__version__}")
 
@@ -47,14 +78,14 @@ def main() -> None:
 
     # --- 定位构建产物（上传时路径会被裁剪到最少公共祖先，用 glob 自适应）---
     info_file = next(iter(sorted(art_dir.glob("**/keiyoushi-source-info.json"))), None)
-    apk = next(iter(sorted(art_dir.glob("**/*.apk"))), None)
-    jar = next(iter(sorted(art_dir.glob("**/*.jar"))), None)
-    if info_file is None or apk is None or jar is None:
+    if info_file is None:
         raise FileNotFoundError(
-            f"构建产物不完整：info={info_file} apk={apk} jar={jar}\n"
+            f"缺少 keiyoushi-source-info.json\n"
             f"  art_dir 下实际内容: "
             f"{[str(p.relative_to(art_dir)) for p in art_dir.rglob('*')][:40]}"
         )
+    apk = pick_single(art_dir, ".apk", "release APK")
+    jar = pick_single(art_dir, ".jar", "release JAR")
     print(f"info_file = {info_file}")
     print(f"apk = {apk.name}  jar = {jar.name}")
 
@@ -106,7 +137,9 @@ def main() -> None:
     )
 
     index = index_pb2.Index(
-        name="jldxnb 扩展仓库",
+        name=REPO_NAME,
+        # Mihon 扩展列表里显示的角标，用来和官方仓库的包区分（官方是 "KEI"）
+        badgeLabel="JLD",
         contact=index_pb2.Contact(website="https://github.com/jldxnb/extensions-source"),
         extensionList=index_pb2.ExtensionList(extensions=[ext]),
     )
@@ -121,7 +154,11 @@ def main() -> None:
         MessageToJson(index, preserving_proto_field_name=True),
         encoding="utf-8",
     )
-    (out_dir / "index.pb").write_bytes(index.SerializeToString())
+    # 与上游 publish-repo.py 对齐：index.pb 是 gzip 压缩后的 protobuf。
+    # 原先写成裸 protobuf，一旦将来在 Mihon 里改用 .pb 地址就会解析失败。
+    (out_dir / "index.pb").write_bytes(
+        gzip.compress(index.SerializeToString(deterministic=True), mtime=0)
+    )
 
     print(f"✅ 已生成 {out_dir}")
     print("   index.json / index.min.json / index.pb")

@@ -6,13 +6,19 @@
 # 设计要点（详见 docs/jinmantiantang/12-development-log.md §18.10）：
 #   1. 合并冲突只自动解决两类：
 #      a) src/zh/jinmantiantang/build.gradle.kts 的 versionCode —— 取上游值 + 1
+#         注意：这一条只是兜底。fork 不再提交自己的 versionCode 改动（改由
+#         ensure-version-bump.py 在构建时按"已发布值 + 1"计算），所以正常情况不会冲突；
+#         即便如此也不能只取上游 + 1，最终以构建产物的真实 versionCode 为准（见下第 3 点）。
 #      b) 我们刻意删除的上游 workflow 文件 —— 保持删除
 #      其余冲突：放弃合并并以错误注解提示（此时上一版扩展仍可正常使用）
 #   2. 合并后的 push 使用 GITHUB_TOKEN，不会触发其他 workflow，
 #      因此构建由本文件通过 workflow_call 直接复用 build-jinmantiantang.yml。
-#   3. 发布（repo 分支）仅在构建成功后进行。
-#   4. 若未配置签名 secret，构建回落 debug 签名，索引不含 signingKey，
-#      宿主会要求手动信任；配置后即自动签名并写入指纹。
+#   3. **发布不由本文件负责**：构建与发布都在 build-jinmantiantang.yml 内完成
+#      （构建即发布）。本文件只负责"合并上游 → 触发构建"。若在两边都实现发布，
+#      夜间会发布两次、两个 job 抢着推 repo 分支。
+#   4. 构建前会校验登录功能锚点是否完整、有效 versionCode 是否大于已发布值；
+#      发布前要求签名 secret 存在（缺失则拒绝发布，见 build-jinmantiantang.yml 文件头）。
+#      任一关卡不过 → 不构建/不发布，repo 分支保持上一个可用版本。
 
 name: Sync upstream
 
@@ -115,65 +121,5 @@ jobs:
     uses: ./.github/workflows/build-jinmantiantang.yml
     secrets: inherit
 
-  publish:
-    name: Publish to repo branch
-    needs: [sync, build]
-    if: needs.sync.outputs.merged == 'true' && needs.build.result == 'success'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      SIGNING_KEY_FP: ${{ needs.build.outputs.signing_fingerprint }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: true
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: jinmantiantang
-          path: artifacts
-
-      # ubuntu-latest 自带 python3，无需额外 setup action
-      - name: Install protobuf runtime
-        run: pip install -U protobuf
-
-      - name: Generate index
-        id: genindex
-        continue-on-error: true
-        run: |
-          set -o pipefail
-          python3 .github/scripts/publish-single.py \
-            'src/zh/jinmantiantang' \
-            'artifacts' 2>&1 | tee "$RUNNER_TEMP/publish.log"
-
-      # 与构建步骤同理：把失败摘要写进检查注解与 job summary，便于公开 API 读取
-      - name: Report publish failure
-        if: steps.genindex.outcome == 'failure'
-        run: |
-          EXCERPT=$(tail -40 "$RUNNER_TEMP/publish.log" | tr '\n' '%0A' | head -c 60000)
-          echo "::error title=Generate index failed::$EXCERPT"
-          {
-            echo "## ❌ 生成索引失败"
-            echo ""
-            echo '```text'
-            cat "$RUNNER_TEMP/publish.log"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit 1
-
-      - name: Deploy to repo branch
-        run: |
-          cd repo-out
-          git init -q -b repo
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
-          git add -A
-          git commit -q -m "Publish jinmantiantang $(date -u +%Y-%m-%d)"
-          git push -q -f origin repo
-          echo "✅ 已发布到 repo 分支"
-          echo "仓库地址（添加到 Mihon 的扩展仓库）："
-          echo "https://raw.githubusercontent.com/${{ github.repository }}/repo/index.min.json"
+  # 发布动作不在这里 —— 已统一到 build-jinmantiantang.yml（构建即发布）。
+  # 见文件头第 3 点：两边都实现会导致夜间重复发布、两个 job 抢推 repo 分支。

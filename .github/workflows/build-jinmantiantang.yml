@@ -1,4 +1,10 @@
-# 只构建禁漫天堂这一个扩展，并直接上传产物供下载。
+# 构建禁漫天堂这一个扩展，签名并发布到本仓库的 repo 分支。
+#
+# 本文件是**构建与发布的唯一入口**（单一事实来源）：
+#   - push 到 src/zh/jinmantiantang/** 等路径 → 构建 → 发布
+#   - Actions 手动 workflow_dispatch        → 构建 → 发布（手动重发走这里）
+#   - sync-upstream.yml 合并上游后通过 workflow_call 复用同一条链路
+# 因此"改了代码 push 完却收不到更新"不会再发生。
 #
 # 与上游 build_push.yml 的区别（原因见 docs/jinmantiantang/10-cicd-on-fork.md §16）：
 #   1. 上游的 upload-artifact / publish 都带 `github.repository == 'keiyoushi/extensions-source'`
@@ -10,6 +16,17 @@
 #   3. 不走全量矩阵。上游首次运行会因缺少历史成功记录而回退到空树 SHA，导致 1384 个模块
 #      全部重建；此处只建单模块。
 #   4. 支持 workflow_call，供 sync-upstream.yml 在合并上游后复用。
+#   5. 构建前有两道关卡，脚本在 .github/scripts/ 下：
+#      a) verify-login.py —— 校验 fork 自己加的登录功能是否仍完整挂在扩展上。上游改
+#         Jinmantiantang.kt 时 git 可能"自动合并成功但把挂载点挤掉/重复插入"，此时构建
+#         照样通过，会发布一个没有登录功能的版本且毫无信号。
+#      b) ensure-version-bump.py —— Mihon 只比较 versionCode（不比较内容），不递增就等于
+#         用户收不到更新。此项把模块 versionCode 提到"已发布值 + 1"（只改工作区、不提交，
+#         因此也不会再和上游产生 versionCode 冲突）。
+#   6. 发布前要求签名 secret 存在：debug 签名的包与用户已安装的 release 包签名不一致，
+#      Mihon 会拒绝更新（要求卸载重装）。与其静默发一个装不上的包，不如让流水线红着停住。
+#   7. 三道关卡里，只有第三道（--check-artifact，用产物里的真实 versionCode 比对）是硬闸门，
+#      前两道读不到索引时只告警不阻断——避免 raw.githubusercontent 抖动停掉整条流水线。
 #
 # 注意：GitHub Actions 会设置 CI=true，届时 preBuild 依赖的是 spotlessCheck（严格校验）
 # 而非本地的 spotlessApply，因此代码风格不合规会直接导致构建失败。
@@ -32,6 +49,11 @@ on:
       - 'settings.gradle.kts'
       - 'gradle.properties'
   workflow_dispatch:
+    inputs:
+      skip_publish:
+        description: '只构建并上传产物，不发布到 repo 分支（调试用）'
+        type: boolean
+        default: false
   workflow_call:
     outputs:
       signing_fingerprint:
@@ -61,6 +83,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # 关卡①：fork 自己加的登录功能是否还完整挂在扩展上（失败即中止，不构建不发布）
+      - name: Verify login feature intact
+        run: python3 .github/scripts/verify-login.py
+
+      # 关卡②：保证有效 versionCode 大于已发布值（必要时就地改写 build.gradle.kts）
+      - name: Ensure versionCode advances
+        run: python3 .github/scripts/ensure-version-bump.py
 
       - name: Set up Java
         uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
@@ -126,3 +156,83 @@ jobs:
             src/zh/jinmantiantang/build/keiyoushi-source-info.json
           if-no-files-found: error
           retention-days: 14
+
+  publish:
+    name: Publish to repo branch
+    needs: build
+    # 手动 workflow_dispatch 可勾 skip_publish 只出产物；workflow_call（sync-upstream）
+    # 与 push 场景下 inputs 为空，条件为真，照常发布。
+    if: inputs.skip_publish != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SIGNING_KEY_FP: ${{ needs.build.outputs.signing_fingerprint }}
+    steps:
+      # 签名缺失时拒绝发布（取舍见文件头第 6 点）：repo 分支保持上一个可用版本，
+      # 比发一个签名不匹配、用户装不上的包要好。
+      - name: Require signing key
+        run: |
+          if [ -z "$SIGNING_KEY_FP" ]; then
+            echo "::error title=签名 secret 缺失，拒绝发布::没拿到签名指纹，说明 SIGNING_KEY / ALIAS / KEY_STORE_PASSWORD / KEY_PASSWORD 至少有一个没配好。debug 签名的包会让已安装用户无法更新，因此本次不发布。"
+            exit 1
+          fi
+          echo "签名指纹：$SIGNING_KEY_FP"
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: jinmantiantang
+          path: artifacts
+
+      # 版本必须与 index_pb2.py 的 gencode 完全一致：该文件由 protoc 生成，导入时会做
+      # ValidateProtobufRuntimeVersion 校验。用 `pip install -U protobuf` 拉到更新版本会
+      # 在某个随机夜晚直接失败。升级时请同步重新生成 gencode 并同时改这里。
+      - name: Install protobuf runtime
+        run: pip install 'protobuf==7.35.1'
+
+      # 关卡③（硬闸门）：用产物里的真实 versionCode 与已发布索引比对，不递增就不发布
+      - name: Verify versionCode is newer than published
+        run: python3 .github/scripts/ensure-version-bump.py --check-artifact artifacts
+
+      - name: Generate index
+        id: genindex
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python3 .github/scripts/publish-single.py \
+            'src/zh/jinmantiantang' \
+            'artifacts' 2>&1 | tee "$RUNNER_TEMP/publish.log"
+
+      # 把失败摘要写进检查注解与 job summary，便于用公开 API 读取
+      - name: Report publish failure
+        if: steps.genindex.outcome == 'failure'
+        run: |
+          EXCERPT=$(tail -40 "$RUNNER_TEMP/publish.log" | tr '\n' '%0A' | head -c 60000)
+          echo "::error title=Generate index failed::$EXCERPT"
+          {
+            echo "## ❌ 生成索引失败"
+            echo ""
+            echo '```text'
+            cat "$RUNNER_TEMP/publish.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      - name: Deploy to repo branch
+        run: |
+          cd repo-out
+          git init -q -b repo
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          git add -A
+          git commit -q -m "Publish jinmantiantang $(date -u +%Y-%m-%d)"
+          git push -q -f origin repo
+          echo "✅ 已发布到 repo 分支"
+          echo "仓库地址（添加到 Mihon 的扩展仓库）："
+          echo "https://raw.githubusercontent.com/${{ github.repository }}/repo/index.min.json"
