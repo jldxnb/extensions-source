@@ -3,10 +3,13 @@
 # 与上游 build_push.yml 的区别（原因见 docs/jinmantiantang/10-cicd-on-fork.md §16）：
 #   1. 上游的 upload-artifact / publish 都带 `github.repository == 'keiyoushi/extensions-source'`
 #      守卫，在 fork 上会被跳过，下载不到产物。此处不加守卫。
-#   2. 刻意不执行「Prepare signing key」——不创建 signingkey.jks，ExtensionPlugin 就会
-#      回落到 debug 签名；反之空 keystore 文件会让构建在签名阶段失败。
+#   2. 若已配置签名 secret（SIGNING_KEY 等），用其签名并产出稳定的 release 包；
+#      未配置则回落 debug 签名（每次构建的签名都可能不同，不适合自动更新）。
+#      上游的「Prepare signing key」在无 secret 时会产生空 keystore 导致构建失败，故此处
+#      用 HAS_SIGNING_KEY 条件守卫，而不是无条件创建文件。
 #   3. 不走全量矩阵。上游首次运行会因缺少历史成功记录而回退到空树 SHA，导致 1384 个模块
 #      全部重建；此处只建单模块。
+#   4. 支持 workflow_call，供 sync-upstream.yml 在合并上游后复用。
 #
 # 注意：GitHub Actions 会设置 CI=true，届时 preBuild 依赖的是 spotlessCheck（严格校验）
 # 而非本地的 spotlessApply，因此代码风格不合规会直接导致构建失败。
@@ -14,7 +17,6 @@
 name: Build jinmantiantang
 
 on:
-  workflow_dispatch:
   push:
     branches:
       - main
@@ -29,8 +31,14 @@ on:
       - 'build.gradle.kts'
       - 'settings.gradle.kts'
       - 'gradle.properties'
+  workflow_dispatch:
+  workflow_call:
 
-permissions: {}
+permissions:
+  contents: write
+
+env:
+  HAS_SIGNING_KEY: ${{ secrets.SIGNING_KEY != '' }}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -41,6 +49,9 @@ jobs:
     name: Build :src:zh:jinmantiantang
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    outputs:
+      # 证书 SHA-256 指纹，供发布流水线写入扩展仓库索引的 signingKey 字段
+      signing_fingerprint: ${{ steps.fingerprint.outputs.fingerprint }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -56,9 +67,31 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
 
-      - name: Assemble release
-        id: assemble
-        continue-on-error: true
+      # 仅在配置了签名 secret 时才创建 keystore；否则回落 debug 签名。
+      # 切勿在无 secret 时无条件创建文件——空的 keystore 会让构建在签名阶段失败。
+      - name: Prepare signing key
+        if: env.HAS_SIGNING_KEY == 'true'
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+        run: echo "$SIGNING_KEY" | base64 -d > signingkey.jks
+
+      - name: Compute signing fingerprint
+        if: env.HAS_SIGNING_KEY == 'true'
+        id: fingerprint
+        env:
+          ALIAS: ${{ secrets.ALIAS }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+        run: |
+          FP=$(keytool -exportcert -keystore signingkey.jks -alias "$ALIAS" \
+               -storepass "$KEY_STORE_PASSWORD" 2>/dev/null \
+               | sha256sum | cut -d' ' -f1)
+          echo "fingerprint=$FP" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        env:
+          ALIAS: ${{ secrets.ALIAS }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           set -o pipefail
           ./gradlew :src:zh:jinmantiantang:assembleRelease 2>&1 | tee "$RUNNER_TEMP/build.log"
@@ -67,7 +100,7 @@ jobs:
       # 注解可通过公开 API（/check-runs/{id}/annotations）读取，因此无需仓库管理权限
       # 也能定位失败原因。
       - name: Report build failure
-        if: steps.assemble.outcome == 'failure'
+        if: failure()
         run: |
           EXCERPT=$(grep -nE "FAILURE:|^e: |error:|What went wrong|Execution failed|> Task .* FAILED|Caused by|^\* Where:" "$RUNNER_TEMP/build.log" | tail -20 | tr '\n' '%0A' | head -c 60000)
           echo "::error title=Gradle assembleRelease failed::$EXCERPT"
@@ -78,10 +111,8 @@ jobs:
             tail -120 "$RUNNER_TEMP/build.log"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          exit 1
 
       - name: Upload artifacts
-        if: steps.assemble.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: jinmantiantang

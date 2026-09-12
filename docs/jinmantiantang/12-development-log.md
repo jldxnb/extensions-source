@@ -102,6 +102,11 @@ E:\Codebase\Android\keiyoushi\_push   ← 本地工作仓库（稀疏检出）
 | 2026-09-12 | `28409a1b` | fix | 登录状态行 `Preference` → `EditTextPreference` | 基类 `Preference` 在本编译类路径上无法以 `Preference(context)` 构造 | CI run 34685479063 |
 | 2026-09-12 | `64564dc4` | fix | `SharedPreferences.getString()` 返回 `String?`，状态行补 `orEmpty()` | 可空性缺失导致编译失败 | **CI run 34685907943 ✅** |
 | 2026-09-12 | （本次） | docs | 新增 §18 开发记录；`docs/` 首次推送到 fork | 使经验记录随仓库持久化，重克隆可恢复 | — |
+| 2026-09-12 | `7868a84a` | docs | 补充 §18.10 自动化流水线可行性分析 | 回应「能否全自动同步+构建+发布」的疑问 | — |
+| 2026-09-12 | — | ✅实测 | **APK 实机验证通过**：安装使用正常 | 用户确认 | 实机 |
+| 2026-09-12 | （本次） | chore | 删除 6 个上游 workflow（build_push/codeberg_mirror/build_pull_request/cleanup_releases/issue_moderator/lock），只保留 build-jinmantiantang 与 zizmor | 用户要求 Actions 只跑我们自己那一个；上游 CI 在 fork 上必然失败且无产物 | push 后 Actions 列表 |
+| 2026-09-12 | （本次） | feat | 新增 `sync-upstream.yml`（每日自动同步上游→合并→构建→发布到 repo 分支）与 `publish-single.py`；build workflow 增加可选签名支持与 workflow_call | 实现全自动流水线（用户决定不加人工闸门，见 §18.10.4） | 首次合并后观察 |
+| 2026-09-12 | （本次） | feat | 生成扩展专用签名密钥（本地 `keiyoushi/signing/`，不入库），等待用户配置 4 个 GitHub secret 后启用 release 签名与自动更新 | debug 签名每次不同，无法用于自动更新；稳定密钥是自动更新的前提 | 配置 secret 后 |
 
 **未提交的本地产物**（不入库，仅在本地）：
 
@@ -354,7 +359,11 @@ src/zh/jinmantiantang
      （开一个 issue，附上游变更摘要与 §14.12 验收清单，等确认后再发布）
 ```
 
-这样绝大多数同步（其他扩展的更新）完全无人干预，只有真正可能影响登录功能的那少数几次才需要人看一眼。
+这样绝大多数同步（其他扩展的更新）完全无人干预。
+
+> **用户决策（2026-09-12）：不加人工确认闸门，全自动发布。**
+> 理由：① 出了问题自然会去看；② 不跟随上游更新反而更容易失效——上游修了站点适配而我们不同步，扩展一样不能用。
+> 相应地，发布流水线失败时 CI 会直接报红，属于预期行为。
 
 ### 18.10.5 实现顺序建议
 

@@ -1,0 +1,149 @@
+# 定时同步上游 keiyoushi/extensions-source，合并后自动构建并发布到本仓库的
+# `repo` 分支。Mihon 添加
+#   https://raw.githubusercontent.com/jldxnb/extensions-source/repo/index.min.json
+# 即可自动收到更新，无需手动下载 APK。
+#
+# 设计要点（详见 docs/jinmantiantang/12-development-log.md §18.10）：
+#   1. 合并冲突只自动解决两类：
+#      a) src/zh/jinmantiantang/build.gradle.kts 的 versionCode —— 取上游值 + 1
+#      b) 我们刻意删除的上游 workflow 文件 —— 保持删除
+#      其余冲突：放弃合并并以错误注解提示（此时上一版扩展仍可正常使用）
+#   2. 合并后的 push 使用 GITHUB_TOKEN，不会触发其他 workflow，
+#      因此构建由本文件通过 workflow_call 直接复用 build-jinmantiantang.yml。
+#   3. 发布（repo 分支）仅在构建成功后进行。
+#   4. 若未配置签名 secret，构建回落 debug 签名，索引不含 signingKey，
+#      宿主会要求手动信任；配置后即自动签名并写入指纹。
+
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: '30 18 * * *' # 每天一次（UTC 18:30 = 北京 02:30）
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Merge upstream
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      merged: ${{ steps.merge.outputs.merged }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # 合并需要共同祖先
+          persist-credentials: true # 合并后要推送
+
+      - name: Merge upstream
+        id: merge
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/keiyoushi/extensions-source.git
+          git fetch upstream main --no-tags
+
+          BASE=$(git merge-base HEAD upstream/main || true)
+          if [ -n "$BASE" ] && [ "$BASE" = "$(git rev-parse upstream/main)" ]; then
+            echo "已与上游同步，无需合并"
+            echo "merged=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if git merge upstream/main --no-edit; then
+            echo "merged=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          CONFLICTS=$(git diff --name-only --diff-filter=U)
+          echo "冲突文件："
+          echo "$CONFLICTS"
+
+          # 自动解决 ①：versionCode 取上游值 + 1
+          if echo "$CONFLICTS" | grep -q "src/zh/jinmantiantang/build.gradle.kts"; then
+            git checkout --theirs src/zh/jinmantiantang/build.gradle.kts
+            VC=$(grep -oE 'versionCode = [0-9]+' src/zh/jinmantiantang/build.gradle.kts | grep -oE '[0-9]+')
+            sed -i "s/versionCode = ${VC}/versionCode = $((VC + 1))/" src/zh/jinmantiantang/build.gradle.kts
+            git add src/zh/jinmantiantang/build.gradle.kts
+          fi
+
+          # 自动解决 ②：我们刻意删除的上游 workflow 保持删除
+          for f in build_push.yml codeberg_mirror.yml build_pull_request.yml \
+                   cleanup_releases.yml issue_moderator.yml lock.yml; do
+            if git diff --name-only --diff-filter=U | grep -q ".github/workflows/$f"; then
+              git rm -q ".github/workflows/$f"
+            fi
+          done
+
+          if git diff --name-only --diff-filter=U | grep -q .; then
+            git diff --name-only --diff-filter=U | tee "$GITHUB_STEP_SUMMARY"
+            git merge --abort
+            echo "::error title=合并冲突::存在无法自动解决的冲突，需要人工按 docs §18.7 SOP 处理"
+            exit 1
+          fi
+
+          git commit --no-edit
+          echo "merged=true" >> "$GITHUB_OUTPUT"
+
+      - name: Push
+        if: steps.merge.outputs.merged == 'true'
+        run: git push origin main
+
+  build:
+    name: Build
+    needs: sync
+    if: needs.sync.outputs.merged == 'true'
+    uses: ./.github/workflows/build-jinmantiantang.yml
+    secrets: inherit
+
+  publish:
+    name: Publish to repo branch
+    needs: [sync, build]
+    if: needs.sync.outputs.merged == 'true' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SIGNING_KEY_FP: ${{ needs.build.outputs.signing_fingerprint }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: jinmantiantang
+          path: artifacts
+
+      # ubuntu-latest 自带 python3，无需额外 setup action
+      - name: Install protobuf runtime
+        run: pip install -U protobuf
+
+      - name: Generate index
+        run: |
+          python3 .github/scripts/publish-single.py \
+            'src/zh/jinmantiantang' \
+            'artifacts/src/zh/jinmantiantang/build'
+
+      - name: Deploy to repo branch
+        run: |
+          cd repo-out
+          git init -q -b repo
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          git add -A
+          git commit -q -m "Publish jinmantiantang $(date -u +%Y-%m-%d)"
+          git push -q -f origin repo
+          echo "✅ 已发布到 repo 分支"
+          echo "仓库地址（添加到 Mihon 的扩展仓库）："
+          echo "https://raw.githubusercontent.com/${{ github.repository }}/repo/index.min.json"
