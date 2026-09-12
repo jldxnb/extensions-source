@@ -2,7 +2,7 @@
 
 > 审查时间：2026-09-12
 > 审查范围：`src/zh/jinmantiantang/src/eu/kanade/tachiyomi/extension/zh/jinmantiantang/` 下 5 个 Kotlin 文件
-> （`Jinmantiantang.kt` 324 行、`Auth.kt` 201 行、`Preferences.kt` 161 行、`Filters.kt` 132 行、`ScrambledImageInterceptor.kt` 111 行），
+> （`Jinmantiantang.kt` 323 行、`Auth.kt` 200 行、`Preferences.kt` 161 行、`Filters.kt` 131 行、`ScrambledImageInterceptor.kt` 111 行；按 `splitlines()` 计，下同），
 > 以及被引用的 `core/` 工具函数（`Json.kt` / `Jsoup.kt` / `RateLimit.kt`）。
 > 代码基线：`60cfe97f`（= `jldxnb/extensions-source` main，本地 `src/zh/jinmantiantang` 与之逐字节一致，无未提交改动）。
 >
@@ -209,7 +209,7 @@ rows 的算法（getRows）：aid ≥ 421926 → modulus 8；≥ 268850 → modu
 | **JMT-27** | 低 | `Auth.kt:131-157、84-87` | `/login` 短路实为防御性死代码；`clearSession()` 的"清登录标记"与用户理解的"退出登录"语义不符 |
 | **JMT-28** | 低 | `Auth.kt:163-200` | 设置项直接改偏好键绕过 `AuthManager`（双写者）；`EditTextPreference` 替身写法缺"何时可撤掉"的 TODO |
 | **JMT-29** | 低 | `Jinmantiantang.kt:54-64`、`Preferences.kt:143-147` | 镜像自愈复用同一 chain 请求跨域资源 → 会顺带穿过 Auth（触发登录）与 Cloudflare 拦截器；`baseUrl.toHttpUrl()` 每请求重算 |
-| **JMT-30** | 低（文档） | `docs/…/02-runtime-and-network.md` §6.2 | 拦截器链图**缺 Auth 拦截器**；§3 文件清单行数快照漂移（Auth.kt 实测 201 行，文档记 195） |
+| **JMT-30** | 低（文档） | `docs/…/02-runtime-and-network.md` §6.2 | 拦截器链图**缺 Auth 拦截器**；§3 文件清单行数快照漂移（Auth.kt 实测 200 行，文档记 195） |
 
 ### 4.2 逐条说明与修复
 
@@ -603,7 +603,7 @@ private val probeClient = network.client.newBuilder()
 #### JMT-30【低·文档】文档与实现漂移
 
 - `docs/jinmantiantang/02-runtime-and-network.md` §6.2 的拦截器链图只有 4 层（UpdateUrl / 宿主三件套 / ScrambledImage / RateLimit），**缺 Auth 拦截器**（§14 上线时未回填）。按这张图排查"登录为什么不生效"会得出错误结论。建议补一行 `├─ [应用拦截器] AuthManager.intercept（登录自愈）`，并注明它位于 ScrambledImage **之后**、RateLimit **之前**。
-- §3 文件清单的行数快照已漂移：`Auth.kt` 实测 201 行（文档记 195），`Jinmantiantang.kt` 实测 324 行（文档记 323）。
+- §3 文件清单的行数快照已漂移：`Auth.kt` 实测 200 行（文档记 195）；`Jinmantiantang.kt` 实测 323 行（文档记 323，一致）。
 - 建议把 2.3 的"顺序表"补进 §6.2——目前文档只给了装配代码，没有给出"最终生效顺序"这个更关键的结论。
 
 ---

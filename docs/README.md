@@ -97,7 +97,7 @@
 | 站点 | 18comic / JMComic 系（禁漫天堂） |
 | 包名 | `eu.kanade.tachiyomi.extension.zh.jinmantiantang` |
 | 源 ID | `6286738698187452081` |
-| 代码基线 | `jldxnb/extensions-source` @ `main`，HEAD `29d550f08`（2026-09-12）。**注意**：该提交改动了 `Auth.kt`（201 → 245 行），`07-risks-and-maintenance.md` §11.2 中 Auth.kt 的行号已漂移，检索请以函数名（`login` / `reLogin` / `performLogin` / `intercept`）为准 |
+| 代码基线 | `jldxnb/extensions-source` @ `main`，HEAD `29d550f08`（2026-09-12）。**注意**：该提交改动了 `Auth.kt`（200 → 244 行），`07-risks-and-maintenance.md` §11.2 中 Auth.kt 的行号已漂移，检索请以函数名（`login` / `reLogin` / `performLogin` / `intercept`）为准 |
 
 ---
 
