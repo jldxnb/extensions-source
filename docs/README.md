@@ -11,11 +11,11 @@
 ```
 层 1 · 总览          本文件
    │
-层 2 · 现状档案      §1–§13、§14   代码现在是什么样
+层 2 · 现状档案      §1–§14        代码现在是什么样
    │
 层 3 · 计划设计      （暂无）       打算改成什么样
    │
-层 4 · 经验沉淀      §15–§17        怎么构建、怎么发布、怎么调研
+层 4 · 经验沉淀      §15–§19        怎么构建、怎么发布、怎么调研、踩过哪些坑
 ```
 
 ---
@@ -25,6 +25,7 @@
 | 文档 | 说明 |
 | --- | --- |
 | [`../review.md`](../review.md) | **仓库级审查**：整体架构、模块划分、代码组织、CI/CD、风险 |
+| [jinmantiantang/13-code-review.md](jinmantiantang/13-code-review.md) | **扩展级审查快照**：5 个源文件的结构、执行流程与缺陷（无 § 编号；新增缺陷号 JMT-13 起，可并入 §10） |
 | 本文件 | 文档集索引、命名约定、维护规则 |
 
 ---
@@ -61,6 +62,7 @@
 | [10-cicd-on-fork.md](jinmantiantang/10-cicd-on-fork.md) | 在 fork 上用 GitHub Actions 构建的完整攻略 | §16 |
 | [11-har-capture.md](jinmantiantang/11-har-capture.md) | 抓包调研方法论（含 Chrome 清理机制） | §17 |
 | [12-development-log.md](jinmantiantang/12-development-log.md) | **开发记录与维护手册**：变更台账、上游适配 SOP、恢复上下文清单 | §18 |
+| [14-lessons-learned.md](jinmantiantang/14-lessons-learned.md) | **难点与经验总结**：无本地编译环境下的验证方法、版本号合成、APK 签名核验、客户端索引兼容、本地 clone 怪象 | §19 |
 
 ---
 
@@ -80,6 +82,8 @@
 | **怎么在 fork 上一键出安装包** | §16.3（workflow 见 `.github/workflows/build-jinmantiantang.yml`） |
 | **为什么本地能构建、CI 却失败** | §16.6 |
 | **怎么抓包确认一个接口** | §17 |
+| **Mihon 添加仓库报 `Error while decoding …NetworkExtensionStore`** | §19-D12（地址须用 raw，索引须含必填的 `badgeLabel`） |
+| **这次踩过哪些坑、怎么绕开的** | §19 |
 | 改了 `name` 会怎样 | §1.2 源 ID 红线 |
 | 当前版本号是多少 | §1.3（`versionCode = 59`） |
 
@@ -93,7 +97,7 @@
 | 站点 | 18comic / JMComic 系（禁漫天堂） |
 | 包名 | `eu.kanade.tachiyomi.extension.zh.jinmantiantang` |
 | 源 ID | `6286738698187452081` |
-| 代码基线 | `jldxnb/extensions-source` @ `main`，快照 2026-09-11，HEAD `2025891752e4705effc28e87a043f7205014cde3` |
+| 代码基线 | `jldxnb/extensions-source` @ `main`，HEAD `29d550f08`（2026-09-12）。**注意**：该提交改动了 `Auth.kt`（201 → 245 行），`07-risks-and-maintenance.md` §11.2 中 Auth.kt 的行号已漂移，检索请以函数名（`login` / `reLogin` / `performLogin` / `intercept`）为准 |
 
 ---
 
