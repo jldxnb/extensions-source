@@ -107,6 +107,10 @@ E:\Codebase\Android\keiyoushi\_push   ← 本地工作仓库（稀疏检出）
 | 2026-09-12 | （本次） | chore | 删除 6 个上游 workflow（build_push/codeberg_mirror/build_pull_request/cleanup_releases/issue_moderator/lock），只保留 build-jinmantiantang 与 zizmor | 用户要求 Actions 只跑我们自己那一个；上游 CI 在 fork 上必然失败且无产物 | push 后 Actions 列表 |
 | 2026-09-12 | （本次） | feat | 新增 `sync-upstream.yml`（每日自动同步上游→合并→构建→发布到 repo 分支）与 `publish-single.py`；build workflow 增加可选签名支持与 workflow_call | 实现全自动流水线（用户决定不加人工闸门，见 §18.10.4） | 首次合并后观察 |
 | 2026-09-12 | （本次） | feat | 生成扩展专用签名密钥（本地 `keiyoushi/signing/`，不入库），等待用户配置 4 个 GitHub secret 后启用 release 签名与自动更新 | debug 签名每次不同，无法用于自动更新；稳定密钥是自动更新的前提 | 配置 secret 后 |
+| 2026-09-12 | `4a1a040d` | feat | workflow_dispatch 增加 `force_publish` 输入（跳过同步，强制构建并重新发布）；4 个签名 secret 已通过 API 配置完成 | 需要一个手动「重新构建+重新发布」入口；为自动更新准备稳定签名 | run force_publish ✅ |
+| 2026-09-12 | force_publish run | fix | 发布脚本改为 glob 自适应产物路径（upload-artifact 会把路径裁剪到最少公共祖先）；发布失败摘要写入注解与 summary | 首次发布失败：索引生成找不到产物 | 注解读得 |
+| 2026-09-12 | `32204951` | fix | 补上 `workflow_call.outputs.signing_fingerprint` 声明 | 可复用 workflow 的输出必须在 workflow 层显式声明，否则调用方拿不到（导致索引 signingKey 为空） | 索引已含正确指纹 ✅ |
+| 2026-09-12 | — | ✅实测 | **发布链路端到端跑通**：`repo` 分支已发布仅含禁漫天堂的索引，APK/JAR/图标 URL 均可访问，signingKey 与本地指纹一致 | 全流程验证 | API 实查 |
 
 **未提交的本地产物**（不入库，仅在本地）：
 
@@ -325,7 +329,7 @@ src/zh/jinmantiantang
 | --- | --- | --- | --- | --- |
 | **① 同步** | 定时 fetch upstream → 判断是否触及相关路径 → merge | ✅ 完全可行 | 定时 workflow（cron）+ merge + 冲突时停下开 issue | ~60 行 workflow + 一个 versionCode 处理脚本 |
 | **② 构建** | push 自动触发单模块构建 | ✅ **已就绪** | 现有 `build-jinmantiantang.yml` | 0 |
-| **③ 发布** | 产物发到 fork 的 `repo` 分支并生成 index，Mihon 添加我们的仓库地址后**自动更新** | ✅ 可行，工作量最大 | 复用仓库自带的 `publish-repo.py` / `index_pb2.py` / `index.proto`，写单模块简化版；APK/JAR 托管到 GitHub Release | ~100-150 行 |
+| **③ 发布** | 产物发到 fork 的 `repo` 分支并生成 index，Mihon 添加我们的仓库地址后**自动更新** | ✅ **已实现并跑通**（2026-09-12） | `publish-single.py` + `sync-upstream.yml`；APK/JAR/icon 直接放 `repo` 分支用 raw URL 下载，不经 Releases | ~60 行 |
 
 **③ 的关键便利**：官方发布机制就在本仓库里（`.github/scripts/publish-repo.py` 321 行、`index.proto`、`index_pb2.py`），且我们的构建已产出它需要的 `keiyoushi-source-info.json`。不需要从零发明格式。
 
@@ -364,6 +368,15 @@ src/zh/jinmantiantang
 > **用户决策（2026-09-12）：不加人工确认闸门，全自动发布。**
 > 理由：① 出了问题自然会去看；② 不跟随上游更新反而更容易失效——上游修了站点适配而我们不同步，扩展一样不能用。
 > 相应地，发布流水线失败时 CI 会直接报红，属于预期行为。
+
+### 18.10.4.1 已发布的扩展仓库地址（2026-09-12 起可用）
+
+```
+https://raw.githubusercontent.com/jldxnb/extensions-source/repo/index.min.json
+```
+
+在 Mihon：更多 → 设置 → 浏览 → 插件仓库 → 添加，粘贴上面的地址即可。
+之后每次 push 到 main 触发构建（或上游合并后自动构建），扩展会**自动更新**。
 
 ### 18.10.5 实现顺序建议
 
