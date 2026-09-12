@@ -12,3 +12,7 @@ gen
 generated-src/
 .kotlin
 *.jks
+
+# 本地抓包与调研资料（体积大、含个人会话数据，不入库）
+/har/
+

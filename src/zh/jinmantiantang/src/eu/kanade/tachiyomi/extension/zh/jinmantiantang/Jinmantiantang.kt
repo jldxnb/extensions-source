@@ -43,11 +43,19 @@ abstract class Jinmantiantang :
 
     private val updateUrlInterceptor = UpdateUrlInterceptor(preferences)
 
+    private val authManager = AuthManager(
+        preferences = preferences,
+        baseUrl = { baseUrl },
+        headers = { headers },
+        client = { network.client },
+    )
+
     // 处理URL请求
     override val client: OkHttpClient = network.client
         .newBuilder()
         .apply { interceptors().add(0, updateUrlInterceptor) }
         .addInterceptor(ScrambledImageInterceptor)
+        .addInterceptor { chain -> authManager.intercept(chain) }
         // Add rate limit to fix manga thumbnail load failure
         .rateLimit(
             preferences.getString(MAINSITE_RATELIMIT_PREF, MAINSITE_RATELIMIT_PREF_DEFAULT)!!.toInt(),
@@ -303,6 +311,7 @@ abstract class Jinmantiantang :
     )
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        addAuthPreferences(screen, preferences)
         getPreferenceList(screen.context, preferences, updateUrlInterceptor.isUpdated).forEach(screen::addPreference)
         screen.addRandomUAPreference()
     }

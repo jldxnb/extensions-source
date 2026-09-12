@@ -1,0 +1,71 @@
+# 只构建禁漫天堂这一个扩展，并直接上传产物供下载。
+#
+# 与上游 build_push.yml 的区别（原因见 docs/jinmantiantang/10-cicd-on-fork.md §16）：
+#   1. 上游的 upload-artifact / publish 都带 `github.repository == 'keiyoushi/extensions-source'`
+#      守卫，在 fork 上会被跳过，下载不到产物。此处不加守卫。
+#   2. 刻意不执行「Prepare signing key」——不创建 signingkey.jks，ExtensionPlugin 就会
+#      回落到 debug 签名；反之空 keystore 文件会让构建在签名阶段失败。
+#   3. 不走全量矩阵。上游首次运行会因缺少历史成功记录而回退到空树 SHA，导致 1384 个模块
+#      全部重建；此处只建单模块。
+#
+# 注意：GitHub Actions 会设置 CI=true，届时 preBuild 依赖的是 spotlessCheck（严格校验）
+# 而非本地的 spotlessApply，因此代码风格不合规会直接导致构建失败。
+
+name: Build jinmantiantang
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/build-jinmantiantang.yml'
+      - 'src/zh/jinmantiantang/**'
+      - 'core/**'
+      - 'compiler/**'
+      - 'common/**'
+      - 'lib/randomua/**'
+      - 'gradle/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build :src:zh:jinmantiantang
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
+      - name: Assemble release
+        run: ./gradlew :src:zh:jinmantiantang:assembleRelease
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: jinmantiantang
+          path: |
+            src/zh/jinmantiantang/build/outputs/apk/release/*.apk
+            src/zh/jinmantiantang/build/outputs/jar/release/*.jar
+            src/zh/jinmantiantang/build/keiyoushi-source-info.json
+          if-no-files-found: error
+          retention-days: 14
