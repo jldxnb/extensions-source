@@ -57,9 +57,31 @@ jobs:
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
 
       - name: Assemble release
-        run: ./gradlew :src:zh:jinmantiantang:assembleRelease
+        id: assemble
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          ./gradlew :src:zh:jinmantiantang:assembleRelease 2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      # 构建失败时把错误摘要同时写进 job summary 与检查注解。
+      # 注解可通过公开 API（/check-runs/{id}/annotations）读取，因此无需仓库管理权限
+      # 也能定位失败原因。
+      - name: Report build failure
+        if: steps.assemble.outcome == 'failure'
+        run: |
+          EXCERPT=$(grep -nE "FAILURE:|^e: |error:|What went wrong|Execution failed|> Task .* FAILED|Caused by|^\* Where:" "$RUNNER_TEMP/build.log" | tail -20 | tr '\n' '%0A' | head -c 60000)
+          echo "::error title=Gradle assembleRelease failed::$EXCERPT"
+          {
+            echo "## ❌ assembleRelease 失败"
+            echo ""
+            echo '```text'
+            tail -120 "$RUNNER_TEMP/build.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
 
       - name: Upload artifacts
+        if: steps.assemble.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: jinmantiantang
