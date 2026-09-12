@@ -28,9 +28,13 @@ Mihon 判断"有没有新版本"**只比较 versionCode**（不比较内容）�
 
 设计取舍
 --------
-读不到已发布索引时（网络抖动）**只告警、不阻断**：宁可偶尔重复发布一个同版本号的包，
-也不要因为 raw.githubusercontent 抖动停掉整条无人值守流水线。真正的兜底是构建后的
-权威校验——它用的是产物里的真实 versionCode。
+读不到已发布索引时（网络抖动）的处理**分两种模式、刻意不对称**：
+
+* **构建前（默认模式）只告警、不阻断**——此时还没花构建时间，且真正的兜底在后面；
+  没必要因为 raw.githubusercontent 抖一下就停掉整条无人值守流水线。
+* **构建后（--check-artifact）直接失败**——这是发布前的硬闸门，读不到索引就无法确认
+  "新值是否大于线上值"，与其冒"静默把索引版本号回退"的风险，不如红着停住，
+  让 repo 分支保持上一个可用版本。
 """
 from __future__ import annotations
 
@@ -63,7 +67,12 @@ class IndexUnavailable(RuntimeError):
 def fetch_published_version_code(index_url: str, index_file: str | None) -> int | None:
     """返回索引中本扩展的 versionCode；索引里没有本扩展时返回 None。"""
     if index_file:
-        data = json.loads(Path(index_file).read_text(encoding="utf-8"))
+        # 本地文件读取失败也按"索引不可用"处理：保持与网络失败一致的 fail-open/fail-closed 语义，
+        # 而不是把 FileNotFoundError 直接抛出去
+        try:
+            data = json.loads(Path(index_file).read_text(encoding="utf-8"))
+        except Exception as error:  # noqa: BLE001
+            raise IndexUnavailable(f"本地索引文件读取失败（{index_file}）：{error}") from error
     else:
         last_error: Exception | None = None
         for attempt in range(1, RETRIES + 1):
@@ -127,6 +136,15 @@ def main() -> int:
     try:
         published = fetch_published_version_code(args.index_url, args.index_file)
     except IndexUnavailable as error:
+        if args.check_artifact:
+            # 发布前是硬闸门：读不到索引就无法确认"新值是否大于线上值"，此时宁可红着停住，
+            # 也不要冒"静默把索引版本号回退"的风险（repo 分支会保持上一个可用版本）。
+            print(
+                f"::error title=无法读取已发布索引，拒绝发布::索引不可用（{error}）。"
+                "发布前必须确认 versionCode 已大于线上值，因此本次不发布；"
+                "repo 分支保持上一个可用版本，下次运行会重试。"
+            )
+            return 1
         print(
             f"::warning title=无法读取已发布索引::索引不可用（{error}）。"
             "本次不做版本号保证，请留意构建后的权威校验结果。"
@@ -151,11 +169,16 @@ def main() -> int:
         return 0
 
     new_module_vc = published + 1 - offset
-    if not 0 <= new_module_vc <= 999:
+    # 上界说明：插件并不限制模块值（ExtensionPlugin.kt:137 是 `基准 × 1000 + 模块值`，
+    # 没有掩码），模块值超过 999 只是让有效值进到下一个千位段（如 105xxx），仍然唯一且
+    # 严格递增；将来上游把 libVersion 升档（基准从 104 跳到 106）时有效值会大幅上升，
+    # 而本脚本是按**有效值**比较的，会自动适应。这里给一个宽松的 9999 只为拦住真正的异常
+    # （例如 libVersion 被回退导致算出的模块值为负或离谱）。
+    if not 0 <= new_module_vc <= 9999:
         print(
             f"::error title=versionCode 无法自动推进::已发布有效值 {published} 与当前 "
             f"libVersion {major}.{minor} 的组合算出的模块 versionCode 为 {new_module_vc}，"
-            "超出可自动处理的区间（0-999）。多半是 libVersion 档位变了，请人工核对"
+            "超出可自动处理的区间（0-9999）。多半是 libVersion 档位被回退，请人工核对"
             "versionCode 与 libVersion 的合成关系。"
         )
         return 1

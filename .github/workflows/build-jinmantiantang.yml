@@ -25,8 +25,13 @@
 #         因此也不会再和上游产生 versionCode 冲突）。
 #   6. 发布前要求签名 secret 存在：debug 签名的包与用户已安装的 release 包签名不一致，
 #      Mihon 会拒绝更新（要求卸载重装）。与其静默发一个装不上的包，不如让流水线红着停住。
-#   7. 三道关卡里，只有第三道（--check-artifact，用产物里的真实 versionCode 比对）是硬闸门，
-#      前两道读不到索引时只告警不阻断——避免 raw.githubusercontent 抖动停掉整条流水线。
+#   7. 发布前还有一道「内容判据」（check-content-changed.py）：对 JAR 做**版本无关**的规范化
+#      哈希（跳过含版本号的 AndroidManifest.xml 与签名材料 META-INF/**），与线上已发布的那份
+#      比对。一致就跳过发布——Mihon 只比较 versionCode，内容没变却发布会让用户收到一次
+#      "什么都没改"的更新提示，并白耗一个版本号。
+#   8. 各关卡的阻断策略：内容判据 **fail-open**（读不到线上产物就照发，绝不卡住发布）；
+#      登录锚点校验、versionCode 比对、签名检查则**失败即中止**。取舍是"宁可红着停住，
+#      也不要静默降级"。
 #
 # 注意：GitHub Actions 会设置 CI=true，届时 preBuild 依赖的是 spotlessCheck（严格校验）
 # 而非本地的 spotlessApply，因此代码风格不合规会直接导致构建失败。
@@ -189,18 +194,34 @@ jobs:
           name: jinmantiantang
           path: artifacts
 
+      # 关卡③：内容判据。Mihon 只比较 versionCode（不比较内容），"内容没变却发布"会让用户
+      # 收到一次什么都没改的更新提示，并白耗一个版本号。这里对 JAR 做版本无关的规范化哈希，
+      # 与线上已发布的那份比对；一致就跳过发布会。该脚本 fail-open，任何异常都按"内容已变"
+      # 处理，绝不会卡住发布。
+      - name: Check content changed
+        id: content
+        run: python3 .github/scripts/check-content-changed.py --artifact artifacts
+
+      - name: Notice skipped publish
+        if: steps.content.outputs.changed != 'true'
+        run: |
+          echo "::notice title=内容未变，跳过发布::本次构建的扩展代码/资源与线上已发布的一致，未发布、未消耗版本号。线上仍为 v${{ steps.content.outputs.version_name }}。"
+
       # 版本必须与 index_pb2.py 的 gencode 完全一致：该文件由 protoc 生成，导入时会做
       # ValidateProtobufRuntimeVersion 校验。用 `pip install -U protobuf` 拉到更新版本会
       # 在某个随机夜晚直接失败。升级时请同步重新生成 gencode 并同时改这里。
       - name: Install protobuf runtime
+        if: steps.content.outputs.changed == 'true'
         run: pip install 'protobuf==7.35.1'
 
-      # 关卡③（硬闸门）：用产物里的真实 versionCode 与已发布索引比对，不递增就不发布
+      # 关卡④（硬闸门）：用产物里的真实 versionCode 与已发布索引比对，不递增就不发布
       - name: Verify versionCode is newer than published
+        if: steps.content.outputs.changed == 'true'
         run: python3 .github/scripts/ensure-version-bump.py --check-artifact artifacts
 
       - name: Generate index
         id: genindex
+        if: steps.content.outputs.changed == 'true'
         continue-on-error: true
         run: |
           set -o pipefail
@@ -224,6 +245,10 @@ jobs:
           exit 1
 
       - name: Deploy to repo branch
+        if: steps.content.outputs.changed == 'true'
+        env:
+          VERSION_NAME: ${{ steps.content.outputs.version_name }}
+          VERSION_CODE: ${{ steps.content.outputs.version_code }}
         run: |
           cd repo-out
           git init -q -b repo
@@ -231,8 +256,9 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
           git add -A
-          git commit -q -m "Publish jinmantiantang $(date -u +%Y-%m-%d)"
+          # 提交信息带上版本号与来源提交，便于回溯"某个版本对应哪次提交"
+          git commit -q -m "Publish v${VERSION_NAME} (versionCode ${VERSION_CODE}) from ${GITHUB_SHA::7}"
           git push -q -f origin repo
-          echo "✅ 已发布到 repo 分支"
+          echo "✅ 已发布到 repo 分支：v${VERSION_NAME}（versionCode ${VERSION_CODE}）"
           echo "仓库地址（添加到 Mihon 的扩展仓库）："
           echo "https://raw.githubusercontent.com/${{ github.repository }}/repo/index.min.json"
