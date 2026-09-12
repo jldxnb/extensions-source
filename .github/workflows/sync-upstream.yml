@@ -20,6 +20,11 @@ on:
   schedule:
     - cron: '30 18 * * *' # 每天一次（UTC 18:30 = 北京 02:30）
   workflow_dispatch:
+    inputs:
+      force_publish:
+        description: '跳过上游同步，强制构建并发布（测试 / 手动重发）'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -34,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
-      merged: ${{ steps.merge.outputs.merged }}
+      merged: ${{ steps.merge.outputs.merged || steps.force.outputs.forced }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -42,8 +47,15 @@ jobs:
           fetch-depth: 0 # 合并需要共同祖先
           persist-credentials: true # 合并后要推送
 
+      # 手动触发且勾选 force_publish 时：跳过同步，直接构建并重新发布
+      - name: Force publish
+        if: inputs.force_publish == true
+        id: force
+        run: echo "forced=true" >> "$GITHUB_OUTPUT"
+
       - name: Merge upstream
         id: merge
+        if: inputs.force_publish != true
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
