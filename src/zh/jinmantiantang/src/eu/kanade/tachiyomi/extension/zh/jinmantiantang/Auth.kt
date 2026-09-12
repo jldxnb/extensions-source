@@ -87,11 +87,46 @@ internal class AuthManager(
     }
 
     /**
+     * 登录去重锁。
+     *
+     * Mihon 在阅读/更新书架时会并发发起多个请求，而每个请求都会各自判断"是否需要登录"。
+     * 没有这把锁时，N 个并发请求会各发一次登录 POST（首次进入阅读、切换镜像后尤其明显），
+     * 既浪费请求、也可能触发站点风控。
+     */
+    private val loginLock = Any()
+
+    /**
      * 执行登录。凭据无效或接口异常时抛 [IOException]，消息面向用户。
+     *
+     * 并发安全：先到的线程登录完成后，其余线程发现"已是登录态"就直接返回，复用同一次登录。
      */
     fun login() {
         if (!isConfigured) return
 
+        synchronized(loginLock) {
+            // 双重检查：并发场景下可能已被其它线程登完
+            if (!needsLogin) return
+            performLogin()
+        }
+    }
+
+    /**
+     * 会话失效后的重登：清掉"已登录"标记再登录。
+     *
+     * 清标记与登录必须在这把锁里一起完成——否则并发请求会互相把标记清掉，
+     * 结果每个请求各登一次（会话失效时通常会同时命中多个图片请求）。
+     */
+    private fun reLogin() {
+        if (!isConfigured) return
+
+        synchronized(loginLock) {
+            clearSession()
+            performLogin()
+        }
+    }
+
+    /** 真正发出登录请求。调用方必须已持有 [loginLock]。 */
+    private fun performLogin() {
         val base = baseUrl()
 
         val body = FormBody.Builder()
@@ -114,7 +149,15 @@ internal class AuthManager(
                 if (!response.isSuccessful) {
                     throw IOException("禁漫登录失败：HTTP ${response.code}")
                 }
-                response.parseAs<LoginResult>()
+                // 站点被 CF 挑战或维护时会返回 HTML，kotlinx 抛的是 SerializationException /
+                // MissingFieldException，都不是 IOException。这里统一转成 IOException，让
+                // "失败即 IOException" 的契约成立——否则用户看到的是解析器的内部报错文案。
+                runCatching { response.parseAs<LoginResult>() }.getOrElse { cause ->
+                    throw IOException(
+                        "禁漫登录失败：站点返回了非预期内容（可能被 Cloudflare 拦截或站点维护中）",
+                        cause,
+                    )
+                }
             }
 
         if (result.status != LOGIN_STATUS_SUCCESS) {
@@ -131,7 +174,8 @@ internal class AuthManager(
     fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
 
-        // 登录请求自身放行，否则递归
+        // 登录请求自身放行。注意：login() 走的是宿主 client（不含本拦截器），所以这里不是
+        // 为了防递归，而是兜住"其它调用方拿主 client 去请求 /login"这种情况。
         if (request.url.encodedPath == LOGIN_PATH) {
             return chain.proceed(request)
         }
@@ -148,8 +192,8 @@ internal class AuthManager(
         // 此时重登一次再试；每个请求最多重试一次，不递归。
         if (!needsLoginNow && isConfigured && response.request.url.encodedPath == LOGIN_ERROR_PATH) {
             response.close()
-            clearSession()
-            login()
+            // 会话失效：清标记 + 重登必须原子完成（见 reLogin 注释）
+            reLogin()
             response = chain.proceed(request)
         }
 
