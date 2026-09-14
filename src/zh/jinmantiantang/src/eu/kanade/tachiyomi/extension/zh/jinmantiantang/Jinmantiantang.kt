@@ -58,10 +58,20 @@ abstract class Jinmantiantang :
 
     private val updateUrlInterceptor = UpdateUrlInterceptor(preferences)
 
+    private val authManager = AuthManager(
+        preferences = preferences,
+        baseUrl = { baseUrl },
+        headers = { headers },
+        client = { network.client },
+    )
+
     override fun OkHttpClient.Builder.configureClient() = apply {
         // 拦截器放最前：主站请求失败时自动拉取新镜像列表
         interceptors().add(0, updateUrlInterceptor)
         addInterceptor(ScrambledImageInterceptor)
+        // 顺序有意：个人登录拦截器在上游 LoginInterceptor 之前。
+        // 会话失效自愈后要重放请求，上游那条在链的下游才能跟着生效。
+        addInterceptor { chain -> authManager.intercept(chain) }
         // 设置了账号密码时自动登录（cookie 与应用内置浏览器共享）
         addInterceptor(LoginInterceptor(preferences, network.client, { baseUrl }, { headers }))
         // Add rate limit to fix manga thumbnail load failure
@@ -500,6 +510,8 @@ abstract class Jinmantiantang :
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         val context = screen.context
+
+        addAuthPreferences(screen, preferences)
 
         EditTextPreference(context).apply {
             key = USERNAME_PREF
