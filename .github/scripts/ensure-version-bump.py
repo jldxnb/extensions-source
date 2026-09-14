@@ -47,6 +47,14 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+
+def _configure_stdout() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+
+
+_configure_stdout()
+
 DEFAULT_MODULE_REL = "src/zh/jinmantiantang/build.gradle.kts"
 PACKAGE_NAME = "eu.kanade.tachiyomi.extension.zh.jinmantiantang"
 DEFAULT_INDEX_URL = (
