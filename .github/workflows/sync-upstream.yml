@@ -11,6 +11,8 @@
 # 避免把半应用的个人修改静默构建成错误 APK。
 #
 # 前置条件：默认分支必须设为 personal，schedule 事件才会从本文件触发。
+# 权限：本 job 需要 secret SYNC_TOKEN（Contents write + Workflows write）。
+# 默认 GITHUB_TOKEN 不能更新 .github/workflows/**，因此不能用于这个同步 job。
 # 远端迁移已一次性完成；本 workflow 只维护 main 与 personal 的同步关系。
 name: Sync upstream
 
@@ -46,6 +48,7 @@ jobs:
           ref: personal
           fetch-depth: 0
           persist-credentials: true
+          token: ${{ secrets.SYNC_TOKEN }}
 
       - name: Force publish
         if: inputs.force_publish == true
