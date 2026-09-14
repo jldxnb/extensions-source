@@ -1,5 +1,20 @@
 # Agent instructions
 
+## Personal fork branch contract
+
+This checkout is the personal fork, not the upstream repository. Before changing branches, CI, or
+release infrastructure, read [docs/personal/upstream-maintenance.md](docs/personal/upstream-maintenance.md).
+
+- `main` is an official-only mirror. Do not commit personal features or fork infrastructure there.
+- `personal` is the full working tree: official `main` plus all personal commits. Make personal
+  changes on `personal`, normally one topic per commit.
+- `repo` contains generated release artifacts only. Never edit or commit source there.
+- When upstream changes, update `main` first, then rebase `personal` onto `main`. Do not merge
+  upstream into `personal` to bypass a rebase conflict.
+- If a rebase or patch application fails, stop and report it. Never use `|| true` or continue a
+  release with partially applied personal changes.
+- Release provenance must retain both the official baseline commit and the personal source commit.
+
 Before writing or modifying any extension, multisrc theme, or lib code in this repository, **read
 [CONTRIBUTING.md](CONTRIBUTING.md) in full**. It is the source of truth for conventions here and is
 updated frequently - do not rely on prior knowledge of this codebase or of Tachiyomi/Mihon
