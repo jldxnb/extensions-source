@@ -6,6 +6,9 @@ import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.network.POST
 import keiyoushi.utils.parseAs
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import okhttp3.FormBody
 import okhttp3.Headers
@@ -96,6 +99,13 @@ internal class AuthManager(
     private val loginLock = Any()
 
     /**
+     * 当前会话代数。请求发出前记录代数；会话失效时只有仍持有旧代数的请求
+     * 才允许执行一次重登，避免同一轮失效被多个并发请求重复 POST。
+     */
+    @Volatile
+    private var sessionGeneration = 0
+
+    /**
      * 执行登录。凭据无效或接口异常时抛 [IOException]，消息面向用户。
      *
      * 并发安全：先到的线程登录完成后，其余线程发现"已是登录态"就直接返回，复用同一次登录。
@@ -107,19 +117,43 @@ internal class AuthManager(
             // 双重检查：并发场景下可能已被其它线程登完
             if (!needsLogin) return
             performLogin()
+            sessionGeneration++
         }
     }
 
     /**
-     * 会话失效后的重登：清掉"已登录"标记再登录。
+     * 应用启动时主动建立一次会话。
      *
-     * 清标记与登录必须在这把锁里一起完成——否则并发请求会互相把标记清掉，
-     * 结果每个请求各登一次（会话失效时通常会同时命中多个图片请求）。
+     * Mihon 在 AppScope 中初始化 ExtensionManager 时会构造所有 Source，因此这里可以在
+     * 软件启动阶段异步登录，而不必等到用户打开受限作品。登录结果不向 UI 报错：
+     * 失败时后续请求仍会走 [login] / [reLogin] 兜底。
      */
-    private fun reLogin() {
+    fun loginOnStartup() {
+        if (!isConfigured) return
+
+        CoroutineScope(Dispatchers.IO).launch {
+            runCatching {
+                synchronized(loginLock) {
+                    performLogin()
+                    sessionGeneration++
+                }
+            }
+        }
+    }
+
+    /**
+     * 会话失效后的重登：同一条会话失效事件只允许一个请求真正发起登录。
+     *
+     * 请求发出前记录旧代数；进入锁后若代数已变化，说明另一个请求已经完成了重登，
+     * 当前请求直接复用新会话并重试原请求。代数在发请求前递增，因此即使重登失败，
+     * 同一轮并发请求也不会反复提交账号密码。
+     */
+    private fun reLogin(expectedGeneration: Int) {
         if (!isConfigured) return
 
         synchronized(loginLock) {
+            if (sessionGeneration != expectedGeneration) return
+            sessionGeneration++
             clearSession()
             performLogin()
         }
@@ -180,6 +214,9 @@ internal class AuthManager(
             return chain.proceed(request)
         }
 
+        // 记录请求发出前的会话代数；用于判断响应返回时是否已有其他线程完成重登。
+        val requestGeneration = sessionGeneration
+
         // 先取一次登录判定，用于判断本次请求是否已经登录过
         val needsLoginNow = needsLogin
         if (needsLoginNow) {
@@ -192,8 +229,8 @@ internal class AuthManager(
         // 此时重登一次再试；每个请求最多重试一次，不递归。
         if (!needsLoginNow && isConfigured && response.request.url.encodedPath == LOGIN_ERROR_PATH) {
             response.close()
-            // 会话失效：清标记 + 重登必须原子完成（见 reLogin 注释）
-            reLogin()
+            // 只允许观察到同一代数的首个请求执行重登，其余并发请求复用结果。
+            reLogin(requestGeneration)
             response = chain.proceed(request)
         }
 
