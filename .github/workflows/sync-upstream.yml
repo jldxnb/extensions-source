@@ -1,0 +1,102 @@
+# 同步官方 main，并把 personal 的个人提交重新接到最新 main 上。
+#
+# 分支模型（长期约束）：
+#   main     = keiyoushi/extensions-source/main 的镜像，不含个人功能
+#   personal = main + 本项目自己的修改，是默认构建与发布分支
+#
+# 本 workflow 不自动“猜”冲突结果：rebase 一旦冲突立即中止并报告，
+# 避免把半应用的个人修改静默构建成错误 APK。
+#
+# 前置条件：默认分支必须设为 personal，schedule 事件才会从本文件触发。
+# 远端迁移步骤见 docs/personal/upstream-maintenance.md。
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: '30 18 * * *' # UTC 18:30 = 北京 02:30
+  workflow_dispatch:
+    inputs:
+      force_publish:
+        description: '跳过同步，直接用当前 personal 重新构建并发布（测试 / 手动重发）'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync main and rebase personal
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      should_build: ${{ steps.sync.outputs.rebased || steps.force.outputs.forced || 'false' }}
+      upstream_sha: ${{ steps.sync.outputs.upstream_sha }}
+    steps:
+      - name: Checkout personal
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: personal
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Force publish
+        if: inputs.force_publish == true
+        id: force
+        run: echo "forced=true" >> "$GITHUB_OUTPUT"
+
+      - name: Sync main and rebase personal
+        id: sync
+        if: inputs.force_publish != true
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git remote add upstream https://github.com/keiyoushi/extensions-source.git
+          git fetch upstream main --no-tags
+          UPSTREAM_SHA=$(git rev-parse upstream/main)
+          echo "upstream_sha=$UPSTREAM_SHA" >> "$GITHUB_OUTPUT"
+          echo "官方 main: $UPSTREAM_SHA"
+
+          git fetch origin main --no-tags
+          git switch -C main origin/main
+
+          if ! git merge --ff-only upstream/main; then
+            echo "::error title=main 不是官方纯镜像::origin/main 与 upstream/main 不是 fast-forward 关系。请先完成一次性分支迁移，再启用定时同步。"
+            exit 1
+          fi
+          git push origin main
+
+          git switch personal
+          BEFORE=$(git rev-parse HEAD)
+          if ! git rebase main; then
+            git diff --name-only --diff-filter=U | tee "$GITHUB_STEP_SUMMARY" || true
+            git rebase --abort || true
+            echo "::error title=personal rebase 冲突::官方改动与个人修改发生真实冲突。已中止 rebase；personal 与 repo 分支保持原样，请人工处理。"
+            exit 1
+          fi
+          AFTER=$(git rev-parse HEAD)
+
+          if [ "$BEFORE" = "$AFTER" ]; then
+            echo "personal 已基于当前 main，无需重建"
+            echo "rebased=false" >> "$GITHUB_OUTPUT"
+          else
+            git push --force-with-lease origin personal
+            echo "personal 已 rebase 并推送: $BEFORE -> $AFTER"
+            echo "rebased=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build rebased personal
+    needs: sync
+    if: needs.sync.outputs.should_build == 'true'
+    uses: ./.github/workflows/build-jinmantiantang.yml
+    with:
+      upstream_sha: ${{ needs.sync.outputs.upstream_sha }}
+    secrets: inherit
