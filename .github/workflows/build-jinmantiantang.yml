@@ -16,22 +16,18 @@
 #   3. 不走全量矩阵。上游首次运行会因缺少历史成功记录而回退到空树 SHA，导致 1384 个模块
 #      全部重建；此处只建单模块。
 #   4. 支持 workflow_call，供 sync-upstream.yml 在合并上游后复用。
-#   5. 构建前有两道关卡，脚本在 .github/scripts/ 下：
-#      a) verify-login.py —— 校验 fork 自己加的登录功能是否仍完整挂在扩展上。上游改
-#         Jinmantiantang.kt 时 git 可能"自动合并成功但把挂载点挤掉/重复插入"，此时构建
-#         照样通过，会发布一个没有登录功能的版本且毫无信号。
-#      b) ensure-version-bump.py —— Mihon 只比较 versionCode（不比较内容），不递增就等于
-#         用户收不到更新。此项把模块 versionCode 提到"已发布值 + 1"（只改工作区、不提交，
-#         因此也不会再和上游产生 versionCode 冲突）。
-#   6. 发布前要求签名 secret 存在：debug 签名的包与用户已安装的 release 包签名不一致，
-#      Mihon 会拒绝更新（要求卸载重装）。与其静默发一个装不上的包，不如让流水线红着停住。
-#   7. 发布前还有一道「内容判据」（check-content-changed.py）：对 JAR 做**版本无关**的规范化
-#      哈希（跳过含版本号的 AndroidManifest.xml 与签名材料 META-INF/**），与线上已发布的那份
-#      比对。一致就跳过发布——Mihon 只比较 versionCode，内容没变却发布会让用户收到一次
-#      "什么都没改"的更新提示，并白耗一个版本号。
-#   8. 各关卡的阻断策略：内容判据 **fail-open**（读不到线上产物就照发，绝不卡住发布）；
-#      登录锚点校验、versionCode 比对、签名检查则**失败即中止**。取舍是"宁可红着停住，
-#      也不要静默降级"。
+#   5. 版本号完全跟随上游 Jinmantiantang 模块：
+#      a) verify-login.py —— 校验登录功能是否仍完整插桩；
+#      b) verify-upstream-version.py module —— 构建前要求 personal 模块的 versionCode /
+#         libVersion 与 origin/main（官方镜像）完全一致，不允许个人提交改版本号；
+#      c) verify-upstream-version.py artifact —— 构建后要求产物版本与同一上游值一致。
+#   6. 不再执行“已发布值 + 1”。上游版本未变时：
+#      - 内容变化：发布同一版本，供手动安装；
+#      - 内容未变：跳过发布。
+#   7. 上游版本升级时自然产生更大的 versionCode，Mihon 可识别为自动更新。
+#   8. 一次性版本回退只允许手动 workflow_dispatch 勾选 allow_version_reset。
+#   9. 发布前要求签名 secret 存在：debug 签名与已安装 release 签名不一致时，Mihon 会拒绝更新。
+#  10. 内容判据 fail-open；版本一致性和签名检查 fail-closed。
 #
 # 注意：GitHub Actions 会设置 CI=true，届时 preBuild 依赖的是 spotlessCheck（严格校验）
 # 而非本地的 spotlessApply，因此代码风格不合规会直接导致构建失败。
@@ -60,6 +56,10 @@ on:
         description: '只构建并上传产物，不发布到 repo 分支（调试用）'
         type: boolean
         default: false
+      allow_version_reset:
+        description: '一次性允许发布低于线上 versionCode 的上游精确版本'
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       upstream_sha:
@@ -67,6 +67,11 @@ on:
         required: false
         type: string
         default: ''
+      allow_version_reset:
+        description: '一次性允许发布低于线上 versionCode 的上游精确版本'
+        required: false
+        type: boolean
+        default: false
     outputs:
       signing_fingerprint:
         description: '证书 SHA-256 指纹（未配置签名 secret 时为空）'
@@ -90,6 +95,9 @@ jobs:
     outputs:
       # 证书 SHA-256 指纹，供发布流水线写入扩展仓库索引的 signingKey 字段
       signing_fingerprint: ${{ steps.fingerprint.outputs.fingerprint }}
+      expected_version_code: ${{ steps.upstream_version.outputs.expected_version_code }}
+      expected_version_name: ${{ steps.upstream_version.outputs.expected_version_name }}
+      expected_lib_version: ${{ steps.upstream_version.outputs.expected_lib_version }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -101,9 +109,13 @@ jobs:
       - name: Verify login feature intact
         run: python3 .github/scripts/verify-login.py
 
-      # 关卡②：保证有效 versionCode 大于已发布值（必要时就地改写 build.gradle.kts）
-      - name: Ensure versionCode advances
-        run: python3 .github/scripts/ensure-version-bump.py
+      # 关卡②：模块版本必须与官方 main 完全一致；personal 只允许有功能补丁。
+      - name: Fetch official main version source
+        run: git fetch origin main --no-tags --depth=1
+
+      - name: Verify module version matches upstream
+        id: upstream_version
+        run: python3 .github/scripts/verify-upstream-version.py module --ref origin/main
 
       - name: Set up Java
         uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
@@ -182,7 +194,7 @@ jobs:
       SIGNING_KEY_FP: ${{ needs.build.outputs.signing_fingerprint }}
       UPSTREAM_BASE: ${{ inputs.upstream_sha }}
     steps:
-      # 签名缺失时拒绝发布（取舍见文件头第 6 点）：repo 分支保持上一个可用版本，
+      # 签名缺失时拒绝发布（取舍见文件头第 9 点）：repo 分支保持上一个可用版本，
       # 比发一个签名不匹配、用户装不上的包要好。
       - name: Require signing key
         run: |
@@ -211,26 +223,59 @@ jobs:
         id: content
         run: python3 .github/scripts/check-content-changed.py --artifact artifacts
 
-      - name: Notice skipped publish
-        if: steps.content.outputs.changed != 'true'
+      # 关卡③：产物版本必须等于 origin/main 中 Jinmantiantang 的模块版本。
+      - name: Verify artifact version matches upstream
+        id: version
+        env:
+          EXPECTED_VERSION_CODE: ${{ needs.build.outputs.expected_version_code }}
+          EXPECTED_VERSION_NAME: ${{ needs.build.outputs.expected_version_name }}
+          EXPECTED_LIB_VERSION: ${{ needs.build.outputs.expected_lib_version }}
         run: |
-          echo "::notice title=内容未变，跳过发布::本次构建的扩展代码/资源与线上已发布的一致，未发布、未消耗版本号。线上仍为 v${{ steps.content.outputs.version_name }}。"
+          ARGS=(
+            artifact
+            --artifact artifacts
+            --expected-version-code "$EXPECTED_VERSION_CODE"
+            --expected-version-name "$EXPECTED_VERSION_NAME"
+            --expected-lib-version "$EXPECTED_LIB_VERSION"
+          )
+          if [ "${{ inputs.allow_version_reset }}" = "true" ]; then
+            ARGS+=(--allow-version-reset)
+          fi
+          python3 .github/scripts/verify-upstream-version.py "${ARGS[@]}"
+
+      # 发布条件只看两件事：内容是否变化、上游版本号是否变化。
+      # 同版本的个人改动允许发布到 repo，但只能手动安装；版本升级则可由 Mihon 自动更新。
+      - name: Decide publish
+        id: publish
+        run: |
+          if [ "${{ steps.content.outputs.changed }}" = "true" ] || [ "${{ steps.version.outputs.version_changed }}" = "true" ]; then
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "${{ steps.version.outputs.version_reset }}" = "true" ]; then
+            echo "::warning title=已授权一次性版本回退::repo 分支将切换到上游精确版本，客户端需卸载后手动安装。"
+          fi
+          if [ "${{ steps.content.outputs.changed }}" = "true" ] && [ "${{ steps.version.outputs.version_changed }}" != "true" ]; then
+            echo "::warning title=同版本内容更新::版本号未变化，Mihon 不会自动提示更新，需要手动安装。"
+          fi
+
+      - name: Notice skipped publish
+        if: steps.publish.outputs.should_publish != 'true'
+        run: |
+          echo "::notice title=内容与版本均未变，跳过发布::线上仍为 v${{ steps.content.outputs.version_name }}（versionCode ${{ steps.content.outputs.version_code }}）。"
 
       # 版本必须与 index_pb2.py 的 gencode 完全一致：该文件由 protoc 生成，导入时会做
       # ValidateProtobufRuntimeVersion 校验。用 `pip install -U protobuf` 拉到更新版本会
       # 在某个随机夜晚直接失败。升级时请同步重新生成 gencode 并同时改这里。
       - name: Install protobuf runtime
-        if: steps.content.outputs.changed == 'true'
+        if: steps.publish.outputs.should_publish == 'true'
         run: pip install 'protobuf==7.35.1'
-
-      # 关卡④（硬闸门）：用产物里的真实 versionCode 与已发布索引比对，不递增就不发布
-      - name: Verify versionCode is newer than published
-        if: steps.content.outputs.changed == 'true'
-        run: python3 .github/scripts/ensure-version-bump.py --check-artifact artifacts
 
       - name: Generate index
         id: genindex
-        if: steps.content.outputs.changed == 'true'
+        if: steps.publish.outputs.should_publish == 'true'
         continue-on-error: true
         run: |
           set -o pipefail
@@ -254,10 +299,10 @@ jobs:
           exit 1
 
       - name: Deploy to repo branch
-        if: steps.content.outputs.changed == 'true'
+        if: steps.publish.outputs.should_publish == 'true'
         env:
-          VERSION_NAME: ${{ steps.content.outputs.version_name }}
-          VERSION_CODE: ${{ steps.content.outputs.version_code }}
+          VERSION_NAME: ${{ steps.version.outputs.built_version_name }}
+          VERSION_CODE: ${{ steps.version.outputs.built_version_code }}
         run: |
           SOURCE_SHA=$(git rev-parse --short HEAD)
           UPSTREAM_LABEL=""
