@@ -24,6 +24,14 @@ import shutil
 import sys
 from pathlib import Path
 
+
+def _configure_stdout() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+
+
+_configure_stdout()
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import index_pb2  # noqa: E402
 from google.protobuf.json_format import MessageToJson  # noqa: E402
