@@ -1,5 +1,7 @@
 # 禁漫天堂扩展 · 开发记录与维护手册
 
+> **历史说明（2026-09-14）**：本文记录迁移前的单 `main` 模型。当前分支职责、官方同步与发布流程已改为 `main = 官方镜像`、`personal = 个人修改`，以 [../personal/upstream-maintenance.md](../personal/upstream-maintenance.md) 为准。
+
 > 本文件是「禁漫天堂扩展技术档案」文档集的一部分。
 > 索引：[`docs/README.md`](../README.md)
 > 包含全局章节：§18（**全局编号跨文件连续，请勿重排**）
