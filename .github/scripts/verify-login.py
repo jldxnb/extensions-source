@@ -44,6 +44,9 @@ MAIN_FILE = "Jinmantiantang.kt"
 CHECKS: list[tuple[str, str, int, str]] = [
     (AUTH_FILE, "internal class AuthManager(", 1, "AuthManager 类"),
     (AUTH_FILE, "fun login()", 1, "登录请求实现"),
+    (AUTH_FILE, "fun loginOnStartup()", 1, "应用启动登录入口"),
+    (AUTH_FILE, "private var sessionGeneration = 0", 1, "会话代数"),
+    (AUTH_FILE, "private fun reLogin(expectedGeneration: Int)", 1, "会话失效重登去重"),
     (AUTH_FILE, "fun intercept(chain: Interceptor.Chain): Response", 1, "请求拦截与自愈"),
     (AUTH_FILE, "internal fun addAuthPreferences(", 1, "账号设置项"),
     (AUTH_FILE, 'internal const val USERNAME_PREF = "jmUsername"', 1, "偏好键 USERNAME_PREF"),
@@ -53,6 +56,7 @@ CHECKS: list[tuple[str, str, int, str]] = [
     (MAIN_FILE, "= AuthManager(", 1, "主类中构造 AuthManager"),
     (MAIN_FILE, "authManager.intercept(chain)", 1, "把登录拦截器挂到 client 链上"),
     (MAIN_FILE, "addAuthPreferences(screen, preferences)", 1, "设置页接入账号设置项"),
+    (MAIN_FILE, "authManager.loginOnStartup()", 1, "应用启动时触发登录"),
     (MAIN_FILE, "interceptors().add(0, updateUrlInterceptor)", 1, "镜像自愈拦截器仍在链上"),
     (MAIN_FILE, "addInterceptor(ScrambledImageInterceptor)", 1, "图片还原拦截器仍在链上"),
 ]
