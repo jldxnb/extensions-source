@@ -1,16 +1,28 @@
 # Keiyoushi Extensions
 
-### Please give the repo a :star:
+> **个人 fork 说明**
+>
+> 本仓库默认分支 `personal`，只维护并发布“禁漫天堂”（`src/zh/jinmantiantang`）一个扩展，
+> 额外提供账号登录。`main` 仅镜像上游官方代码，`repo` 仅保存构建产物。
+>
+> Mihon 扩展仓库地址：
+>
+> `https://raw.githubusercontent.com/jldxnb/extensions-source/repo/index.min.json`
+>
+> 分支、同步与发布规则见
+> [docs/personal/upstream-maintenance.md](docs/personal/upstream-maintenance.md)。
 
-| Build                                                                                                                                                                               | Need Help?                                                                                                                                              |
-|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| [![CI](https://github.com/keiyoushi/extensions-source/actions/workflows/build_push.yml/badge.svg)](https://github.com/keiyoushi/extensions-source/actions/workflows/build_push.yml) | [![Discord](https://img.shields.io/discord/1193460528052453448.svg?label=discord&labelColor=7289da&color=2c2f33&style=flat)](https://discord.gg/3FbCpdKbdY) |
+### Build status
+
+| Build |
+|---|
+| [![Build jinmantiantang](https://github.com/jldxnb/extensions-source/actions/workflows/build-jinmantiantang.yml/badge.svg?branch=personal)](https://github.com/jldxnb/extensions-source/actions/workflows/build-jinmantiantang.yml) |
 
 ## Usage
-**If you are new to repository/extensions, please read the [Keiyoushi Getting Started guide](https://keiyoushi.github.io/docs/guides/getting-started#adding-the-extension-repo) first.**
 
-* You can add our repo by visiting the [Keiyoushi Website](https://keiyoushi.github.io/add-repo)
-* Otherwise, copy & paste the following URL: https://github.com/keiyoushi/extensions/raw/repo/index.pb
+* 本 fork 的仓库地址：
+  `https://raw.githubusercontent.com/jldxnb/extensions-source/repo/index.min.json`
+* 以下 Requests / Contributing / License 章节保留上游原文，作为源码与贡献规范参考。
 
 ## Requests
 
