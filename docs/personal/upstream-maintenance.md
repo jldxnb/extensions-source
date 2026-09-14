@@ -173,9 +173,9 @@ GitHub Actions 的 `schedule` 只在默认分支上的 workflow 文件生效。
 
 ---
 
-## 7. 一次性远端迁移
+## 7. 一次性远端迁移（已于 2026-09-14 完成）
 
-当前历史中，`main` 曾经同时包含官方和个人提交。迁移顺序：
+迁移前 `main` 曾同时包含官方和个人提交。迁移顺序：
 
 ```text
 1. 备份旧 main
@@ -205,6 +205,20 @@ git push --force-with-lease origin main
 ```
 
 > 第 3 步是唯一需要改写历史的远端操作。没有完成默认分支切换前，不要启用新的定时同步。
+
+
+### 7.1 实际迁移结果
+
+| 项 | 结果 |
+| --- | --- |
+| 默认分支 | `personal` |
+| `main` | `a1a1d8cc`，与 `upstream/main` 完全一致 |
+| 旧 `main` 快照 | `legacy/pre-split-main` = `70b05c167` |
+| `personal` | 基于 `main` 的线性个人提交栈 |
+| 同步 workflow 验证 | run `34802380437` success；无变更时正确跳过 build/publish |
+| `repo` 分支 | 未重写，线上 `1.4.61` 保持可用 |
+
+上面的命令保留作为灾难恢复演练；日常维护不再重复执行。
 
 ---
 
