@@ -1,0 +1,264 @@
+# 构建禁漫天堂这一个扩展，签名并发布到本仓库的 repo 分支。
+#
+# 本文件是**构建与发布的唯一入口**（单一事实来源）：
+#   - push 到 src/zh/jinmantiantang/** 等路径 → 构建 → 发布
+#   - Actions 手动 workflow_dispatch        → 构建 → 发布（手动重发走这里）
+#   - sync-upstream.yml 合并上游后通过 workflow_call 复用同一条链路
+# 因此"改了代码 push 完却收不到更新"不会再发生。
+#
+# 与上游 build_push.yml 的区别（原因见 docs/jinmantiantang/10-cicd-on-fork.md §16）：
+#   1. 上游的 upload-artifact / publish 都带 `github.repository == 'keiyoushi/extensions-source'`
+#      守卫，在 fork 上会被跳过，下载不到产物。此处不加守卫。
+#   2. 若已配置签名 secret（SIGNING_KEY 等），用其签名并产出稳定的 release 包；
+#      未配置则回落 debug 签名（每次构建的签名都可能不同，不适合自动更新）。
+#      上游的「Prepare signing key」在无 secret 时会产生空 keystore 导致构建失败，故此处
+#      用 HAS_SIGNING_KEY 条件守卫，而不是无条件创建文件。
+#   3. 不走全量矩阵。上游首次运行会因缺少历史成功记录而回退到空树 SHA，导致 1384 个模块
+#      全部重建；此处只建单模块。
+#   4. 支持 workflow_call，供 sync-upstream.yml 在合并上游后复用。
+#   5. 构建前有两道关卡，脚本在 .github/scripts/ 下：
+#      a) verify-login.py —— 校验 fork 自己加的登录功能是否仍完整挂在扩展上。上游改
+#         Jinmantiantang.kt 时 git 可能"自动合并成功但把挂载点挤掉/重复插入"，此时构建
+#         照样通过，会发布一个没有登录功能的版本且毫无信号。
+#      b) ensure-version-bump.py —— Mihon 只比较 versionCode（不比较内容），不递增就等于
+#         用户收不到更新。此项把模块 versionCode 提到"已发布值 + 1"（只改工作区、不提交，
+#         因此也不会再和上游产生 versionCode 冲突）。
+#   6. 发布前要求签名 secret 存在：debug 签名的包与用户已安装的 release 包签名不一致，
+#      Mihon 会拒绝更新（要求卸载重装）。与其静默发一个装不上的包，不如让流水线红着停住。
+#   7. 发布前还有一道「内容判据」（check-content-changed.py）：对 JAR 做**版本无关**的规范化
+#      哈希（跳过含版本号的 AndroidManifest.xml 与签名材料 META-INF/**），与线上已发布的那份
+#      比对。一致就跳过发布——Mihon 只比较 versionCode，内容没变却发布会让用户收到一次
+#      "什么都没改"的更新提示，并白耗一个版本号。
+#   8. 各关卡的阻断策略：内容判据 **fail-open**（读不到线上产物就照发，绝不卡住发布）；
+#      登录锚点校验、versionCode 比对、签名检查则**失败即中止**。取舍是"宁可红着停住，
+#      也不要静默降级"。
+#
+# 注意：GitHub Actions 会设置 CI=true，届时 preBuild 依赖的是 spotlessCheck（严格校验）
+# 而非本地的 spotlessApply，因此代码风格不合规会直接导致构建失败。
+
+name: Build jinmantiantang
+
+on:
+  push:
+    branches:
+      - personal
+    paths:
+      - '.github/workflows/build-jinmantiantang.yml'
+      - 'src/zh/jinmantiantang/**'
+      - 'core/**'
+      - 'compiler/**'
+      - 'common/**'
+      - 'lib/randomua/**'
+      - 'gradle/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+  workflow_dispatch:
+    inputs:
+      skip_publish:
+        description: '只构建并上传产物，不发布到 repo 分支（调试用）'
+        type: boolean
+        default: false
+  workflow_call:
+    outputs:
+      signing_fingerprint:
+        description: '证书 SHA-256 指纹（未配置签名 secret 时为空）'
+        value: ${{ jobs.build.outputs.signing_fingerprint }}
+
+permissions:
+  contents: write
+
+env:
+  HAS_SIGNING_KEY: ${{ secrets.SIGNING_KEY != '' }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build :src:zh:jinmantiantang
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    outputs:
+      # 证书 SHA-256 指纹，供发布流水线写入扩展仓库索引的 signingKey 字段
+      signing_fingerprint: ${{ steps.fingerprint.outputs.fingerprint }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # 关卡①：fork 自己加的登录功能是否还完整挂在扩展上（失败即中止，不构建不发布）
+      - name: Verify login feature intact
+        run: python3 .github/scripts/verify-login.py
+
+      # 关卡②：保证有效 versionCode 大于已发布值（必要时就地改写 build.gradle.kts）
+      - name: Ensure versionCode advances
+        run: python3 .github/scripts/ensure-version-bump.py
+
+      - name: Set up Java
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
+      # 仅在配置了签名 secret 时才创建 keystore；否则回落 debug 签名。
+      # 切勿在无 secret 时无条件创建文件——空的 keystore 会让构建在签名阶段失败。
+      - name: Prepare signing key
+        if: env.HAS_SIGNING_KEY == 'true'
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+        run: echo "$SIGNING_KEY" | base64 -d > signingkey.jks
+
+      - name: Compute signing fingerprint
+        if: env.HAS_SIGNING_KEY == 'true'
+        id: fingerprint
+        env:
+          ALIAS: ${{ secrets.ALIAS }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+        run: |
+          FP=$(keytool -exportcert -keystore signingkey.jks -alias "$ALIAS" \
+               -storepass "$KEY_STORE_PASSWORD" 2>/dev/null \
+               | sha256sum | cut -d' ' -f1)
+          echo "fingerprint=$FP" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        env:
+          ALIAS: ${{ secrets.ALIAS }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -o pipefail
+          ./gradlew :src:zh:jinmantiantang:assembleRelease 2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      # 构建失败时把错误摘要同时写进 job summary 与检查注解。
+      # 注解可通过公开 API（/check-runs/{id}/annotations）读取，因此无需仓库管理权限
+      # 也能定位失败原因。
+      - name: Report build failure
+        if: failure()
+        run: |
+          EXCERPT=$(grep -nE "FAILURE:|^e: |error:|What went wrong|Execution failed|> Task .* FAILED|Caused by|^\* Where:" "$RUNNER_TEMP/build.log" | tail -20 | tr '\n' '%0A' | head -c 60000)
+          echo "::error title=Gradle assembleRelease failed::$EXCERPT"
+          {
+            echo "## ❌ assembleRelease 失败"
+            echo ""
+            echo '```text'
+            tail -120 "$RUNNER_TEMP/build.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: jinmantiantang
+          path: |
+            src/zh/jinmantiantang/build/outputs/apk/release/*.apk
+            src/zh/jinmantiantang/build/outputs/jar/release/*.jar
+            src/zh/jinmantiantang/build/keiyoushi-source-info.json
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish to repo branch
+    needs: build
+    # 手动 workflow_dispatch 可勾 skip_publish 只出产物；workflow_call（sync-upstream）
+    # 与 push 场景下 inputs 为空，条件为真，照常发布。
+    if: inputs.skip_publish != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SIGNING_KEY_FP: ${{ needs.build.outputs.signing_fingerprint }}
+    steps:
+      # 签名缺失时拒绝发布（取舍见文件头第 6 点）：repo 分支保持上一个可用版本，
+      # 比发一个签名不匹配、用户装不上的包要好。
+      - name: Require signing key
+        run: |
+          if [ -z "$SIGNING_KEY_FP" ]; then
+            echo "::error title=签名 secret 缺失，拒绝发布::没拿到签名指纹，说明 SIGNING_KEY / ALIAS / KEY_STORE_PASSWORD / KEY_PASSWORD 至少有一个没配好。debug 签名的包会让已安装用户无法更新，因此本次不发布。"
+            exit 1
+          fi
+          echo "签名指纹：$SIGNING_KEY_FP"
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: jinmantiantang
+          path: artifacts
+
+      # 关卡③：内容判据。Mihon 只比较 versionCode（不比较内容），"内容没变却发布"会让用户
+      # 收到一次什么都没改的更新提示，并白耗一个版本号。这里对 JAR 做版本无关的规范化哈希，
+      # 与线上已发布的那份比对；一致就跳过发布会。该脚本 fail-open，任何异常都按"内容已变"
+      # 处理，绝不会卡住发布。
+      - name: Check content changed
+        id: content
+        run: python3 .github/scripts/check-content-changed.py --artifact artifacts
+
+      - name: Notice skipped publish
+        if: steps.content.outputs.changed != 'true'
+        run: |
+          echo "::notice title=内容未变，跳过发布::本次构建的扩展代码/资源与线上已发布的一致，未发布、未消耗版本号。线上仍为 v${{ steps.content.outputs.version_name }}。"
+
+      # 版本必须与 index_pb2.py 的 gencode 完全一致：该文件由 protoc 生成，导入时会做
+      # ValidateProtobufRuntimeVersion 校验。用 `pip install -U protobuf` 拉到更新版本会
+      # 在某个随机夜晚直接失败。升级时请同步重新生成 gencode 并同时改这里。
+      - name: Install protobuf runtime
+        if: steps.content.outputs.changed == 'true'
+        run: pip install 'protobuf==7.35.1'
+
+      # 关卡④（硬闸门）：用产物里的真实 versionCode 与已发布索引比对，不递增就不发布
+      - name: Verify versionCode is newer than published
+        if: steps.content.outputs.changed == 'true'
+        run: python3 .github/scripts/ensure-version-bump.py --check-artifact artifacts
+
+      - name: Generate index
+        id: genindex
+        if: steps.content.outputs.changed == 'true'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python3 .github/scripts/publish-single.py \
+            'src/zh/jinmantiantang' \
+            'artifacts' 2>&1 | tee "$RUNNER_TEMP/publish.log"
+
+      # 把失败摘要写进检查注解与 job summary，便于用公开 API 读取
+      - name: Report publish failure
+        if: steps.genindex.outcome == 'failure'
+        run: |
+          EXCERPT=$(tail -40 "$RUNNER_TEMP/publish.log" | tr '\n' '%0A' | head -c 60000)
+          echo "::error title=Generate index failed::$EXCERPT"
+          {
+            echo "## ❌ 生成索引失败"
+            echo ""
+            echo '```text'
+            cat "$RUNNER_TEMP/publish.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      - name: Deploy to repo branch
+        if: steps.content.outputs.changed == 'true'
+        env:
+          VERSION_NAME: ${{ steps.content.outputs.version_name }}
+          VERSION_CODE: ${{ steps.content.outputs.version_code }}
+        run: |
+          cd repo-out
+          git init -q -b repo
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          git add -A
+          # 提交信息带上版本号与来源提交，便于回溯"某个版本对应哪次提交"
+          git commit -q -m "Publish v${VERSION_NAME} (versionCode ${VERSION_CODE}) from ${GITHUB_SHA::7}"
+          git push -q -f origin repo
+          echo "✅ 已发布到 repo 分支：v${VERSION_NAME}（versionCode ${VERSION_CODE}）"
+          echo "仓库地址（添加到 Mihon 的扩展仓库）："
+          echo "https://raw.githubusercontent.com/${{ github.repository }}/repo/index.min.json"
