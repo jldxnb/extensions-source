@@ -1,7 +1,7 @@
 # 个人 fork 分支维护规范
 
-> 状态：2026-09-14 起生效。  
-> 本文是分支、上游同步、发布归属问题的**唯一权威说明**。  
+> 状态：2026-09-14 起生效。
+> 本文是分支、上游同步、发布归属问题的**唯一权威说明**。
 > `docs/jinmantiantang/10-cicd-on-fork.md`、`12-development-log.md`、`14-lessons-learned.md`
 > 记录的是迁移前历史，如与本文冲突，以本文为准。
 
@@ -166,7 +166,7 @@ Publish v<version> (versionCode <code>) from <personal-sha> upstream=<upstream-s
 
 ### 6.3 默认分支要求
 
-GitHub Actions 的 `schedule` 只在默认分支上的 workflow 文件生效。  
+GitHub Actions 的 `schedule` 只在默认分支上的 workflow 文件生效。
 迁移完成后必须将仓库默认分支设为 `personal`；否则定时同步不会运行。
 
 该设置需要在 GitHub 仓库 Settings -> Branches 中修改，或使用 GitHub API 修改仓库 `default_branch`。
