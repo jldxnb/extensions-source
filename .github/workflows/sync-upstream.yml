@@ -4,6 +4,9 @@
 #   main     = keiyoushi/extensions-source/main 的镜像，不含个人功能
 #   personal = main + 本项目自己的修改，是默认构建与发布分支
 #
+# 版本策略：rebase 成功后 personal 自动继承 upstream 的 Jinmantiantang
+# `versionCode` 与 `libVersion`；build workflow 只校验二者一致，不再自动加版本。
+#
 # 本 workflow 不自动“猜”冲突结果：rebase 一旦冲突立即中止并报告，
 # 避免把半应用的个人修改静默构建成错误 APK。
 #
