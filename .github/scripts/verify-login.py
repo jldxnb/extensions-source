@@ -28,6 +28,14 @@ import argparse
 import sys
 from pathlib import Path
 
+
+def _configure_stdout() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+
+
+_configure_stdout()
+
 PKG_REL = "src/zh/jinmantiantang/src/eu/kanade/tachiyomi/extension/zh/jinmantiantang"
 AUTH_FILE = "Auth.kt"
 MAIN_FILE = "Jinmantiantang.kt"
