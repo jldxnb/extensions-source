@@ -117,7 +117,7 @@ def _report(failures: list[str]) -> None:
         print(f"  - {msg}")
     print(
         "\n处理方式：这通常意味着上游改写了 Jinmantiantang.kt 或 Auth.kt，"
-        "把我们的插桩挤掉或重复插入了。请人工核对 docs/jinmantiantang/08-login.md "
+        "把我们的插桩挤掉或重复插入了。请人工核对登录契约与实现。"
         "§14.7.3 与 §14.8 的 4 个挂载点后重试——本次不会构建、不会发布，"
         "repo 分支上仍是上一个可用版本。"
     )
