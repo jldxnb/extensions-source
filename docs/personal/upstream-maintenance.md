@@ -198,7 +198,8 @@ git push origin refs/remotes/origin/main:refs/heads/legacy/pre-split-main
 git push -u origin personal
 
 # 3. main 对齐官方。此处会改写远端 main 历史，执行前确认备份分支存在
-git push --force-with-lease origin personal:main
+git switch main
+git push --force-with-lease origin main
 
 # 4. 到 GitHub Settings -> Branches 将默认分支设为 personal
 ```
