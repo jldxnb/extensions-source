@@ -52,6 +52,14 @@ import zipfile
 from hashlib import sha256
 from pathlib import Path
 
+
+def _configure_stdout() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+
+
+_configure_stdout()
+
 DEFAULT_INDEX_URL = "https://raw.githubusercontent.com/jldxnb/extensions-source/repo/index.min.json"
 RETRIES = 3
 RETRY_DELAY_SEC = 5
