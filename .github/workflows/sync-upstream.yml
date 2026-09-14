@@ -8,7 +8,7 @@
 # 避免把半应用的个人修改静默构建成错误 APK。
 #
 # 前置条件：默认分支必须设为 personal，schedule 事件才会从本文件触发。
-# 远端迁移步骤见 docs/personal/upstream-maintenance.md。
+# 远端迁移已一次性完成；本 workflow 只维护 main 与 personal 的同步关系。
 name: Sync upstream
 
 on:
