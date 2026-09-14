@@ -6,7 +6,7 @@
 #   - sync-upstream.yml 合并上游后通过 workflow_call 复用同一条链路
 # 因此"改了代码 push 完却收不到更新"不会再发生。
 #
-# 与上游 build_push.yml 的区别（原因见 docs/jinmantiantang/10-cicd-on-fork.md §16）：
+# 与上游 build_push.yml 的区别（详细设计记录在本地工作区 docs/，不入 Git）：
 #   1. 上游的 upload-artifact / publish 都带 `github.repository == 'keiyoushi/extensions-source'`
 #      守卫，在 fork 上会被跳过，下载不到产物。此处不加守卫。
 #   2. 若已配置签名 secret（SIGNING_KEY 等），用其签名并产出稳定的 release 包；
