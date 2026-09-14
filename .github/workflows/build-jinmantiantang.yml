@@ -60,6 +60,12 @@ on:
         type: boolean
         default: false
   workflow_call:
+    inputs:
+      upstream_sha:
+        description: '本次构建所基于的官方 main commit SHA（可选，仅用于发布记录）'
+        required: false
+        type: string
+        default: ''
     outputs:
       signing_fingerprint:
         description: '证书 SHA-256 指纹（未配置签名 secret 时为空）'
@@ -72,7 +78,7 @@ env:
   HAS_SIGNING_KEY: ${{ secrets.SIGNING_KEY != '' }}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: build-jinmantiantang
   cancel-in-progress: true
 
 jobs:
@@ -87,6 +93,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: personal
           persist-credentials: false
 
       # 关卡①：fork 自己加的登录功能是否还完整挂在扩展上（失败即中止，不构建不发布）
@@ -172,6 +179,7 @@ jobs:
     timeout-minutes: 15
     env:
       SIGNING_KEY_FP: ${{ needs.build.outputs.signing_fingerprint }}
+      UPSTREAM_BASE: ${{ inputs.upstream_sha }}
     steps:
       # 签名缺失时拒绝发布（取舍见文件头第 6 点）：repo 分支保持上一个可用版本，
       # 比发一个签名不匹配、用户装不上的包要好。
@@ -250,6 +258,11 @@ jobs:
           VERSION_NAME: ${{ steps.content.outputs.version_name }}
           VERSION_CODE: ${{ steps.content.outputs.version_code }}
         run: |
+          SOURCE_SHA=$(git rev-parse --short HEAD)
+          UPSTREAM_LABEL=""
+          if [ -n "${UPSTREAM_BASE:-}" ]; then
+            UPSTREAM_LABEL=" upstream=${UPSTREAM_BASE:0:12}"
+          fi
           cd repo-out
           git init -q -b repo
           git config user.name "github-actions[bot]"
@@ -257,7 +270,7 @@ jobs:
           git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
           git add -A
           # 提交信息带上版本号与来源提交，便于回溯"某个版本对应哪次提交"
-          git commit -q -m "Publish v${VERSION_NAME} (versionCode ${VERSION_CODE}) from ${GITHUB_SHA::7}"
+          git commit -q -m "Publish v${VERSION_NAME} (versionCode ${VERSION_CODE}) from ${SOURCE_SHA}${UPSTREAM_LABEL}"
           git push -q -f origin repo
           echo "✅ 已发布到 repo 分支：v${VERSION_NAME}（versionCode ${VERSION_CODE}）"
           echo "仓库地址（添加到 Mihon 的扩展仓库）："
