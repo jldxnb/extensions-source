@@ -101,7 +101,7 @@
 | 站点 | 18comic / JMComic 系（禁漫天堂） |
 | 包名 | `eu.kanade.tachiyomi.extension.zh.jinmantiantang` |
 | 源 ID | `6286738698187452081` |
-| 代码基线 | `jldxnb/extensions-source` @ `personal`；官方基线为 `upstream/main`。迁移前的完整代码快照保留在本地分支 `backup/main-pre-reorg`，远端迁移后另保留 `legacy/pre-split-main` |
+| 代码基线 | `jldxnb/extensions-source` @ `personal`；官方基线为 `upstream/main`。迁移前完整快照保留在 `legacy/pre-split-main`（`70b05c167`）；`main` 与 `upstream/main` 对齐，默认分支为 `personal` |
 
 ---
 
