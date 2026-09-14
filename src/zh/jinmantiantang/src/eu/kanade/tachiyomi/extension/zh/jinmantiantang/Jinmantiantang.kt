@@ -78,6 +78,10 @@ abstract class Jinmantiantang :
         rateLimit(3, 2.seconds) { it.host == baseUrl.toHttpUrl().host }
     }
 
+    init {
+        authManager.loginOnStartup()
+    }
+
     // 点击量排序(人气)
     override suspend fun getPopularManga(page: Int): MangasPage {
         maybeAutoCheckIn()
