@@ -1,0 +1,33 @@
+{
+  "name": "jldxnb \u6269\u5c55\u4ed3\u5e93",
+  "badgeLabel": "JLD",
+  "signingKey": "9eae77a0ddc4ec30d598a0f542fe2b1c84540c672328aa34304bf2b871a64912",
+  "contact": {
+    "website": "https://github.com/jldxnb/extensions-source"
+  },
+  "extensionList": {
+    "extensions": [
+      {
+        "name": "Jinman Tiantang",
+        "packageName": "eu.kanade.tachiyomi.extension.zh.jinmantiantang",
+        "resources": {
+          "apkUrl": "https://raw.githubusercontent.com/jldxnb/extensions-source/repo/apk/tachiyomi-zh.jinmantiantang-v1.4.62.apk",
+          "iconUrl": "https://raw.githubusercontent.com/jldxnb/extensions-source/repo/icon/ic_launcher.png",
+          "jarUrl": "https://raw.githubusercontent.com/jldxnb/extensions-source/repo/jar/tachiyomi-zh.jinmantiantang-v1.4.62.jar"
+        },
+        "extensionLib": "1.4",
+        "versionCode": "104062",
+        "versionName": "1.4.62",
+        "contentWarning": "CONTENT_WARNING_NSFW",
+        "sources": [
+          {
+            "id": "6286738698187452081",
+            "name": "\u7981\u6f2b\u5929\u5802",
+            "language": "zh",
+            "homeUrl": "https://18comic.vip"
+          }
+        ]
+      }
+    ]
+  }
+}
