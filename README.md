@@ -9,8 +9,7 @@
 >
 > `https://raw.githubusercontent.com/jldxnb/extensions-source/repo/index.min.json`
 >
-> 分支、同步与发布规则见
-> [docs/personal/upstream-maintenance.md](docs/personal/upstream-maintenance.md)。
+> 分支规则：`main` 只镜像官方，`personal` 承载全部个人修改，`repo` 只保存发布产物。
 
 ### Build status
 
