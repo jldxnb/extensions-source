@@ -3,13 +3,13 @@
 
 为什么需要
 ----------
-Mihon 只比较 versionCode（不比较内容）。内容其实没变却发布一版，用户会收到一次
-「什么都没改」的更新提示，同时白白消耗一个版本号；反过来漏发也不行。
+Mihon 只比较 versionCode（不比较内容）。内容其实没变却发布一版，会产生一次无效更新或
+重写 repo 分支；反过来漏发真正的代码变化也不行。
 
 为什么不能直接比 APK / JAR 的整体哈希
 ------------------------------------
-两者都内嵌 `AndroidManifest.xml`，而它含 versionCode / versionName。构建前关卡会先把
-versionCode 提到「已发布值 + 1」，所以整体哈希必然不同，比较没有意义。
+两者都内嵌 `AndroidManifest.xml`，而它含 versionCode / versionName。版本号完全跟随上游，
+同一份代码在不同上游版本下也会得到不同的整体哈希，因此不能直接比较整包哈希。
 
 判据：对 JAR 做「版本无关」的规范化哈希
 --------------------------------------
@@ -33,8 +33,8 @@ versionCode 提到「已发布值 + 1」，所以整体哈希必然不同，比�
 
 输出（同时写入 $GITHUB_OUTPUT，若该环境变量存在）
     changed=true|false
-    version_name=1.4.61
-    version_code=104061
+    version_name=1.4.58
+    version_code=104058
 
 退出码恒为 0：任何异常都按 `changed=true` 处理——宁可多发一版，也不要卡住发布。
 """
