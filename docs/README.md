@@ -4,6 +4,8 @@
 
 > **全局章节编号跨文件连续（§1…§17），不得重排。** 章节号是跨文件的稳定标识，文中交叉引用依赖它。新增内容一律追加新编号。
 
+> **分支模型（2026-09-14 起）**：`main` 只镜像官方代码，`personal` 保存本项目全部个人修改，`repo` 只保存发布产物。分支、上游同步和迁移步骤以 [personal/upstream-maintenance.md](personal/upstream-maintenance.md) 为唯一权威说明；旧文档中“直接在 main 合并个人改动”的描述均属于迁移前历史。
+
 ---
 
 ## 分层结构
@@ -25,6 +27,7 @@
 | 文档 | 说明 |
 | --- | --- |
 | [`../review.md`](../review.md) | **仓库级审查**：整体架构、模块划分、代码组织、CI/CD、风险 |
+| [personal/upstream-maintenance.md](personal/upstream-maintenance.md) | **个人 fork 维护规范**：main/personal/repo 职责、官方更新、CI、远端迁移与 Agent 规则 |
 | [jinmantiantang/13-code-review.md](jinmantiantang/13-code-review.md) | **扩展级审查快照**：5 个源文件的结构、执行流程与缺陷（无 § 编号；新增缺陷号 JMT-13 起，可并入 §10） |
 | 本文件 | 文档集索引、命名约定、维护规则 |
 
@@ -80,6 +83,7 @@
 | **登录相关有哪些风险** | §14.11 |
 | **怎么把改完的代码编译成 APK** | §15 + §16 |
 | **怎么在 fork 上一键出安装包** | §16.3（workflow 见 `.github/workflows/build-jinmantiantang.yml`） |
+| **main / personal / repo 各是什么，怎么同步官方** | [personal/upstream-maintenance.md](personal/upstream-maintenance.md) |
 | **为什么本地能构建、CI 却失败** | §16.6 |
 | **怎么抓包确认一个接口** | §17 |
 | **Mihon 添加仓库报 `Error while decoding …NetworkExtensionStore`** | §19-D12（地址须用 raw，索引须含必填的 `badgeLabel`） |
@@ -97,7 +101,7 @@
 | 站点 | 18comic / JMComic 系（禁漫天堂） |
 | 包名 | `eu.kanade.tachiyomi.extension.zh.jinmantiantang` |
 | 源 ID | `6286738698187452081` |
-| 代码基线 | `jldxnb/extensions-source` @ `main`，HEAD `29d550f08`（2026-09-12）。**注意**：该提交改动了 `Auth.kt`（200 → 244 行），`07-risks-and-maintenance.md` §11.2 中 Auth.kt 的行号已漂移，检索请以函数名（`login` / `reLogin` / `performLogin` / `intercept`）为准 |
+| 代码基线 | `jldxnb/extensions-source` @ `personal`；官方基线为 `upstream/main`。迁移前的完整代码快照保留在本地分支 `backup/main-pre-reorg`，远端迁移后另保留 `legacy/pre-split-main` |
 
 ---
 
