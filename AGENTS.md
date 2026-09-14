@@ -2,8 +2,8 @@
 
 ## Personal fork branch contract
 
-This checkout is the personal fork, not the upstream repository. Before changing branches, CI, or
-release infrastructure, read [docs/personal/upstream-maintenance.md](docs/personal/upstream-maintenance.md).
+This checkout is the personal fork, not the upstream repository. The branch contract below is
+canonical for work on `personal`.
 
 - `main` is an official-only mirror. Do not commit personal features or fork infrastructure there.
 - `personal` is the full working tree: official `main` plus all personal commits. Make personal
