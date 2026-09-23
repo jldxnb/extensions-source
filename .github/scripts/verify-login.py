@@ -12,8 +12,14 @@
 ------
 1. `Auth.kt` 仍然存在，且包含 AuthManager / login() / intercept() / addAuthPreferences()
 2. `Auth.kt` 的三个偏好键常量仍在（改了键名会导致老用户凭据"消失"）
-3. `Jinmantiantang.kt` 中 AuthManager 的构造与拦截器挂载各**恰好 1 处**（0 = 被挤掉，2 = 被重复插入）
-4. 原有的镜像自愈与图片还原拦截器仍在链上（避免上游重构 client 时把整条链换掉）
+3. `Jinmantiantang.kt` 中 AuthManager 的构造、拦截器挂载、设置页入口与启动登录各**恰好 1 处**
+   （0 = 被挤掉，2 = 被重复插入）
+4. 挂载点本身与图片还原拦截器仍在（避免上游重构基类/client 时把整条链换掉）
+
+注：上游 2026-09-22（#19244）把本扩展迁到 KeiSource 1.6，主类改为 `configureClient()`
+挂拦截器，镜像自愈也由扩展自己的 `UpdateUrlInterceptor` 变成 `build.gradle.kts` 里的
+`baseUrl { custom(...) }` 平台实现，所以旧的 `interceptors().add(0, updateUrlInterceptor)`
+锚点换成了 `configureClient()`。
 
 退出码：0 = 通过；1 = 有锚点缺失/重复（调用方应中止构建与发布）
 
@@ -53,11 +59,11 @@ CHECKS: list[tuple[str, str, int, str]] = [
     (AUTH_FILE, 'internal const val PASSWORD_PREF = "jmPassword"', 1, "偏好键 PASSWORD_PREF"),
     (AUTH_FILE, 'internal const val LOGGED_IN_HOST_PREF = "jmLoggedInHost"', 1, "偏好键 LOGGED_IN_HOST_PREF"),
     (AUTH_FILE, "private const val LOGIN_ERROR_PATH", 1, "会话失效判据常量"),
+    (MAIN_FILE, "fun OkHttpClient.Builder.configureClient()", 1, "KeiSource 客户端挂载点（1.6 起拦截器挂在这里）"),
     (MAIN_FILE, "= AuthManager(", 1, "主类中构造 AuthManager"),
     (MAIN_FILE, "authManager.intercept(chain)", 1, "把登录拦截器挂到 client 链上"),
     (MAIN_FILE, "addAuthPreferences(screen, preferences)", 1, "设置页接入账号设置项"),
     (MAIN_FILE, "authManager.loginOnStartup()", 1, "应用启动时触发登录"),
-    (MAIN_FILE, "interceptors().add(0, updateUrlInterceptor)", 1, "镜像自愈拦截器仍在链上"),
     (MAIN_FILE, "addInterceptor(ScrambledImageInterceptor)", 1, "图片还原拦截器仍在链上"),
 ]
 
