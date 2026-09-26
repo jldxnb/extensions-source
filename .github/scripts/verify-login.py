@@ -10,16 +10,28 @@
 
 检查项
 ------
-1. `Auth.kt` 仍然存在，且包含 AuthManager / login() / intercept() / addAuthPreferences()
-2. `Auth.kt` 的三个偏好键常量仍在（改了键名会导致老用户凭据"消失"）
-3. `Jinmantiantang.kt` 中 AuthManager 的构造、拦截器挂载、设置页入口与启动登录各**恰好 1 处**
+1. `Auth.kt` 仍然存在，且包含 AuthManager / login() / loginOnStartup() / reLogin() /
+   intercept() / addAuthStatusPreference() / 旧凭据迁移
+2. `Auth.kt` **不得**再声明 `USERNAME_PREF` / `PASSWORD_PREF`：上游 1.6.59 起在
+   `Preferences.kt` 顶层声明了同名常量，同包重名会直接编译失败
+3. 上游 `Preferences.kt` 的凭据键与 `clearSessionCookies()` 仍在（我们复用它们；
+   上游改名 → 登录静默失效，必须报警）
+4. `Jinmantiantang.kt` 中 AuthManager 的构造、拦截器挂载、设置页入口与启动登录各**恰好 1 处**
    （0 = 被挤掉，2 = 被重复插入）
-4. 挂载点本身与图片还原拦截器仍在（避免上游重构基类/client 时把整条链换掉）
+5. 挂载点本身、图片还原拦截器与上游 `LoginInterceptor` 仍在链上——个人拦截器**必须**排在
+   上游 LoginInterceptor 之前，会话失效自愈要靠重放请求让它在下游跟着生效
 
-注：上游 2026-09-22（#19244）把本扩展迁到 KeiSource 1.6，主类改为 `configureClient()`
-挂拦截器，镜像自愈也由扩展自己的 `UpdateUrlInterceptor` 变成 `build.gradle.kts` 里的
-`baseUrl { custom(...) }` 平台实现，所以旧的 `interceptors().add(0, updateUrlInterceptor)`
-锚点换成了 `configureClient()`。
+上游相关变更（改变过锚点，勿重复踩）
+----------------------------------
+* 2026-09-22 `#19244`：迁移到 KeiSource 1.6，主类改为 `configureClient()` 挂拦截器，
+  镜像自愈一度变成 `build.gradle.kts` 的 `baseUrl { custom(...) }`，
+  因此锚点从 `interceptors().add(0, updateUrlInterceptor)` 换成 `configureClient()`。
+* 2026-09-25 `#19278`：上游**自己实现了账号登录**（`LoginInterceptor`，只按 `jmc_id`
+  cookie 是否存在触发，没有启动登录与会话失效自愈），并恢复了模块自带的镜像/限速偏好，
+  顶部重新定义了 `USERNAME_PREF`/`PASSWORD_PREF`。
+  个人实现保留为主路径、与上游共用这两个键，旧键（`jmUsername`/`jmPassword`）由
+  `migrateLegacyCredentials()` 一次性搬运；设置页的账号/密码两项改用上游那套，
+  个人只补一行「登录状态」。
 
 退出码：0 = 通过；1 = 有锚点缺失/重复（调用方应中止构建与发布）
 
@@ -45,26 +57,37 @@ _configure_stdout()
 PKG_REL = "src/zh/jinmantiantang/src/eu/kanade/tachiyomi/extension/zh/jinmantiantang"
 AUTH_FILE = "Auth.kt"
 MAIN_FILE = "Jinmantiantang.kt"
+PREFS_FILE = "Preferences.kt"
 
 # (文件, 关键片段, 期望出现次数, 说明)
 CHECKS: list[tuple[str, str, int, str]] = [
+    # —— Auth.kt：个人登录实现本体 ——
     (AUTH_FILE, "internal class AuthManager(", 1, "AuthManager 类"),
     (AUTH_FILE, "fun login()", 1, "登录请求实现"),
     (AUTH_FILE, "fun loginOnStartup()", 1, "应用启动登录入口"),
+    (AUTH_FILE, "private fun migrateLegacyCredentials()", 1, "旧凭据键一次性迁移"),
     (AUTH_FILE, "private var sessionGeneration = 0", 1, "会话代数"),
     (AUTH_FILE, "private fun reLogin(expectedGeneration: Int)", 1, "会话失效重登去重"),
     (AUTH_FILE, "fun intercept(chain: Interceptor.Chain): Response", 1, "请求拦截与自愈"),
-    (AUTH_FILE, "internal fun addAuthPreferences(", 1, "账号设置项"),
-    (AUTH_FILE, 'internal const val USERNAME_PREF = "jmUsername"', 1, "偏好键 USERNAME_PREF"),
-    (AUTH_FILE, 'internal const val PASSWORD_PREF = "jmPassword"', 1, "偏好键 PASSWORD_PREF"),
-    (AUTH_FILE, 'internal const val LOGGED_IN_HOST_PREF = "jmLoggedInHost"', 1, "偏好键 LOGGED_IN_HOST_PREF"),
+    (AUTH_FILE, "internal fun addAuthStatusPreference(", 1, "登录状态设置项"),
     (AUTH_FILE, "private const val LOGIN_ERROR_PATH", 1, "会话失效判据常量"),
-    (MAIN_FILE, "fun OkHttpClient.Builder.configureClient()", 1, "KeiSource 客户端挂载点（1.6 起拦截器挂在这里）"),
+    (AUTH_FILE, 'internal const val LOGGED_IN_HOST_PREF = "jmLoggedInHost"', 1, "偏好键 LOGGED_IN_HOST_PREF"),
+    # 防回归：与上游 Preferences.kt 同包重名会直接编译失败
+    (AUTH_FILE, "const val USERNAME_PREF", 0, "Auth.kt 不得声明 USERNAME_PREF"),
+    (AUTH_FILE, "const val PASSWORD_PREF", 0, "Auth.kt 不得声明 PASSWORD_PREF"),
+    # —— 上游 Preferences.kt：个人实现复用的键与工具 ——
+    (PREFS_FILE, 'internal const val USERNAME_PREF = "username"', 1, "复用上游用户名键"),
+    (PREFS_FILE, 'internal const val PASSWORD_PREF = "password"', 1, "复用上游密码键"),
+    (PREFS_FILE, "internal fun clearSessionCookies(", 1, "复用上游清 cookie 工具"),
+    # —— 主类挂载点（3 处）——
+    (MAIN_FILE, "fun OkHttpClient.Builder.configureClient()", 1, "KeiSource 客户端挂载点"),
     (MAIN_FILE, "= AuthManager(", 1, "主类中构造 AuthManager"),
     (MAIN_FILE, "authManager.intercept(chain)", 1, "把登录拦截器挂到 client 链上"),
-    (MAIN_FILE, "addAuthPreferences(screen, preferences)", 1, "设置页接入账号设置项"),
+    (MAIN_FILE, "addAuthStatusPreference(screen, preferences, { baseUrl })", 1, "设置页接入登录状态项"),
     (MAIN_FILE, "authManager.loginOnStartup()", 1, "应用启动时触发登录"),
+    # —— 链上其它拦截器（顺序有依赖）——
     (MAIN_FILE, "addInterceptor(ScrambledImageInterceptor)", 1, "图片还原拦截器仍在链上"),
+    (MAIN_FILE, "addInterceptor(LoginInterceptor(", 1, "上游自动登录仍在链上（兜底）"),
 ]
 
 
@@ -86,7 +109,7 @@ def main() -> int:
 
     texts: dict[str, str] = {}
     failures: list[str] = []
-    for name in (AUTH_FILE, MAIN_FILE):
+    for name in (AUTH_FILE, MAIN_FILE, PREFS_FILE):
         path = pkg_dir / name
         if not path.is_file():
             failures.append(f"{name} 不存在：{path}")
