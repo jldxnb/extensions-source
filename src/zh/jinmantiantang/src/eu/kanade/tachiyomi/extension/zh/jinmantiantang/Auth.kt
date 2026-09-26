@@ -18,9 +18,13 @@ import okhttp3.OkHttpClient
 import okhttp3.Response
 import java.io.IOException
 
-internal const val USERNAME_PREF = "jmUsername"
-internal const val PASSWORD_PREF = "jmPassword"
+// 账号/密码的偏好键由上游 Preferences.kt 提供（USERNAME_PREF = "username"、PASSWORD_PREF = "password"），
+// 本文件不得再声明同名常量：同包顶层重名会直接编译失败。
 internal const val LOGGED_IN_HOST_PREF = "jmLoggedInHost"
+
+// 1.6.59 之前个人实现用的凭据键，只在一次性迁移里读一次（见 migrateLegacyCredentials）
+private const val LEGACY_USERNAME_PREF = "jmUsername"
+private const val LEGACY_PASSWORD_PREF = "jmPassword"
 
 private const val LOGIN_PATH = "/login"
 
@@ -40,7 +44,11 @@ internal class LoginResult(
 )
 
 /**
- * 禁漫账号登录与会话自愈。
+ * 禁漫账号登录与会话自愈（个人实现，主路径）。
+ *
+ * 上游 `#19278` 起自带 `LoginInterceptor`：它只在 `jmc_id` cookie 缺失时登录，
+ * 既不在启动时登录，也不会在"cookie 还在但服务端会话已失效"时重登。
+ * 因此这里保留个人实现，并与上游共用 Preferences.kt 的账号/密码键；上游那条挂在链的下游作兜底。
  *
  * 会话凭证由站点以 `Set-Cookie` 下发，交给宿主的 CookieJar 自动持久化与携带
  * （`AndroidCookieJar` 底层是 `android.webkit.CookieManager`，跨重启有效），
@@ -62,10 +70,10 @@ internal class AuthManager(
     private val password: String get() = preferences.getString(PASSWORD_PREF, "")!!
 
     /**
-     * 当前镜像的 host。主类的 `baseUrl` 是一次性求值的 `val`，运行期不会变，
-     * 因此这里缓存解析结果，避免每个请求都重新解析 URL。
+     * 当前镜像的 host。主类的 `baseUrl` 自 1.6.59 起跟随"使用镜像网址"设置动态变化，
+     * 所以这里不能缓存——缓存了换线路后就检测不出"域名变了需要重登"。
      */
-    private val baseHost: String by lazy { baseUrl().toHttpUrl().host }
+    private val baseHost: String get() = baseUrl().toHttpUrl().host
 
     private var loggedInHost: String
         get() = preferences.getString(LOGGED_IN_HOST_PREF, "")!!
@@ -122,6 +130,25 @@ internal class AuthManager(
     }
 
     /**
+     * 把 1.6.59 之前存在个人键（`jmUsername` / `jmPassword`）里的凭据搬到上游的账号/密码键。
+     *
+     * 上游 `#19278` 的登录实现与设置页用的是 `username` / `password` 两个键；不迁移的话
+     * 老用户升级后会变成"没填账号密码"，登录静默失效。搬完即删旧键，所以只会生效一次
+     * （否则用户清空密码后，旧值会被重新填回去）。
+     */
+    private fun migrateLegacyCredentials() {
+        val legacyUsername = preferences.getString(LEGACY_USERNAME_PREF, null)
+        val legacyPassword = preferences.getString(LEGACY_PASSWORD_PREF, null)
+        if (legacyUsername.isNullOrEmpty() && legacyPassword.isNullOrEmpty()) return
+
+        val editor = preferences.edit()
+        // 上游的 username 键同时是收藏夹显示名，可能已被自动识别填入，这种情况不覆盖
+        if (username.isBlank() && !legacyUsername.isNullOrEmpty()) editor.putString(USERNAME_PREF, legacyUsername)
+        if (password.isBlank() && !legacyPassword.isNullOrEmpty()) editor.putString(PASSWORD_PREF, legacyPassword)
+        editor.remove(LEGACY_USERNAME_PREF).remove(LEGACY_PASSWORD_PREF).apply()
+    }
+
+    /**
      * 应用启动时主动建立一次会话。
      *
      * Mihon 在 AppScope 中初始化 ExtensionManager 时会构造所有 Source，因此这里可以在
@@ -129,6 +156,7 @@ internal class AuthManager(
      * 失败时后续请求仍会走 [login] / [reLogin] 兜底。
      */
     fun loginOnStartup() {
+        migrateLegacyCredentials()
         if (!isConfigured) return
 
         CoroutineScope(Dispatchers.IO).launch {
@@ -239,28 +267,16 @@ internal class AuthManager(
 }
 
 /**
- * 账号相关的设置项，置于设置页最前面。
+ * 登录状态设置项，紧跟在上游的「用户名 / 密码」两项之后。
+ *
+ * 账号与密码两项由上游设置页（`Jinmantiantang.kt` 的 `setupPreferenceScreen`）提供，
+ * 这里不再重复添加，避免出现两套凭据输入框。
  */
-internal fun addAuthPreferences(screen: PreferenceScreen, preferences: SharedPreferences) {
-    EditTextPreference(screen.context).apply {
-        key = USERNAME_PREF
-        title = "禁漫账号"
-        summary = "填入账号密码后自动登录，可解锁少量需要登录的题材"
-        dialogTitle = "请输入禁漫账号"
-        setDefaultValue("")
-    }.also(screen::addPreference)
-
-    EditTextPreference(screen.context).apply {
-        key = PASSWORD_PREF
-        title = "密码"
-        summary = "留空则不使用登录功能"
-        dialogTitle = "请输入密码"
-        setDefaultValue("")
-        setOnBindEditTextListener {
-            it.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-        }
-    }.also(screen::addPreference)
-
+internal fun addAuthStatusPreference(
+    screen: PreferenceScreen,
+    preferences: SharedPreferences,
+    baseUrl: () -> String,
+) {
     // 登录状态行。注意：这里刻意用 EditTextPreference 而非 androidx.preference.Preference ——
     // 后者在本扩展的编译类路径上无法以 Preference(context) 形式构造（实测 CI 编译报
     // "Too many arguments for 'constructor(): Preference'"），而其子类均可正常构造。
@@ -274,6 +290,8 @@ internal fun addAuthPreferences(screen: PreferenceScreen, preferences: SharedPre
         setOnBindEditTextListener { it.inputType = InputType.TYPE_NULL }
         setOnPreferenceClickListener {
             preferences.edit().remove(LOGGED_IN_HOST_PREF).apply()
+            // 一并清掉站点会话 cookie：上游的兜底登录只看 cookie，留着它就不会重登
+            clearSessionCookies(baseUrl())
             title = "登录状态：未登录"
             true
         }
