@@ -515,7 +515,8 @@ abstract class Jinmantiantang :
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         val context = screen.context
 
-        addAuthPreferences(screen, preferences)
+        // 账号/密码两项由下面上游的设置项提供，这里只补一行「登录状态」
+        addAuthStatusPreference(screen, preferences, { baseUrl })
 
         EditTextPreference(context).apply {
             key = USERNAME_PREF
