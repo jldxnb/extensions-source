@@ -3,7 +3,7 @@
 # 本文件是**构建与发布的唯一入口**（单一事实来源）：
 #   - push 到 src/zh/jinmantiantang/** 等路径 → 构建 → 发布
 #   - Actions 手动 workflow_dispatch        → 构建 → 发布（手动重发走这里）
-#   - sync-upstream.yml 合并上游后通过 workflow_call 复用同一条链路
+#   - sync-upstream.yml 每日 rebase 后推送 personal，同样走这条 push 链路
 # 因此"改了代码 push 完却收不到更新"不会再发生。
 #
 # 与上游 build_push.yml 的区别（详细设计记录在本地工作区 docs/，不入 Git）：
@@ -15,7 +15,9 @@
 #      用 HAS_SIGNING_KEY 条件守卫，而不是无条件创建文件。
 #   3. 不走全量矩阵。上游首次运行会因缺少历史成功记录而回退到空树 SHA，导致 1384 个模块
 #      全部重建；此处只建单模块。
-#   4. 支持 workflow_call，供 sync-upstream.yml 在合并上游后复用。
+#   4. 不提供 workflow_call：sync-upstream 只推 personal，构建由那次 push 触发。
+#      否则同一次同步会出现两条构建（push + workflow_call）抢同一个 concurrency 组、
+#      互相取消，还会把父 sync run 显示成 cancelled。
 #   5. 版本号完全跟随上游 Jinmantiantang 模块：
 #      a) verify-login.py —— 校验登录功能是否仍完整插桩；
 #      b) verify-upstream-version.py module —— 构建前要求 personal 模块的 versionCode /
@@ -28,6 +30,8 @@
 #   8. 一次性版本回退只允许手动 workflow_dispatch 勾选 allow_version_reset。
 #   9. 发布前要求签名 secret 存在：debug 签名与已安装 release 签名不一致时，Mihon 会拒绝更新。
 #  10. 内容判据 fail-open；版本一致性和签名检查 fail-closed。
+#  11. 发布记录里的官方基线 SHA 由 Deploy 前的一步从 origin/main 读取（origin/main 即官方镜像，
+#      sync-upstream 会先推它），不再依赖调用方传入；读不到只警告、不阻断发布。
 #
 # 注意：GitHub Actions 会设置 CI=true，届时 preBuild 依赖的是 spotlessCheck（严格校验）
 # 而非本地的 spotlessApply，因此代码风格不合规会直接导致构建失败。
@@ -60,22 +64,6 @@ on:
         description: '一次性允许发布低于线上 versionCode 的上游精确版本'
         type: boolean
         default: false
-  workflow_call:
-    inputs:
-      upstream_sha:
-        description: '本次构建所基于的官方 main commit SHA（可选，仅用于发布记录）'
-        required: false
-        type: string
-        default: ''
-      allow_version_reset:
-        description: '一次性允许发布低于线上 versionCode 的上游精确版本'
-        required: false
-        type: boolean
-        default: false
-    outputs:
-      signing_fingerprint:
-        description: '证书 SHA-256 指纹（未配置签名 secret 时为空）'
-        value: ${{ jobs.build.outputs.signing_fingerprint }}
 
 permissions:
   contents: write
@@ -185,14 +173,12 @@ jobs:
   publish:
     name: Publish to repo branch
     needs: build
-    # 手动 workflow_dispatch 可勾 skip_publish 只出产物；workflow_call（sync-upstream）
-    # 与 push 场景下 inputs 为空，条件为真，照常发布。
+    # 手动 workflow_dispatch 可勾 skip_publish 只出产物；push 场景下 inputs 为空，条件为真，照常发布。
     if: inputs.skip_publish != true
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       SIGNING_KEY_FP: ${{ needs.build.outputs.signing_fingerprint }}
-      UPSTREAM_BASE: ${{ inputs.upstream_sha }}
     steps:
       # 签名缺失时拒绝发布（取舍见文件头第 9 点）：repo 分支保持上一个可用版本，
       # 比发一个签名不匹配、用户装不上的包要好。
@@ -214,6 +200,20 @@ jobs:
         with:
           name: jinmantiantang
           path: artifacts
+
+      # 发布记录里的官方基线 SHA：origin/main 就是官方镜像（sync-upstream 先推它，
+      # 手工同步时同样先推 main）。取不到只警告——溯源信息缺失不该阻断发布。
+      - name: Resolve upstream base
+        id: upstream
+        run: |
+          git fetch origin main --depth=1 --no-tags || true
+          SHA=$(git rev-parse origin/main 2>/dev/null || echo "")
+          if [ -z "$SHA" ]; then
+            echo "::warning title=无法确定官方基线 commit::origin/main 不可用，本次发布记录的 upstream= 字段将为空。"
+          else
+            echo "官方基线（origin/main）：$SHA"
+          fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
       # 关卡③：内容判据。Mihon 只比较 versionCode（不比较内容），"内容没变却发布"会让用户
       # 收到一次什么都没改的更新提示，并白耗一个版本号。这里对 JAR 做版本无关的规范化哈希，
@@ -303,6 +303,7 @@ jobs:
         env:
           VERSION_NAME: ${{ steps.version.outputs.built_version_name }}
           VERSION_CODE: ${{ steps.version.outputs.built_version_code }}
+          UPSTREAM_BASE: ${{ steps.upstream.outputs.sha }}
         run: |
           SOURCE_SHA=$(git rev-parse --short HEAD)
           UPSTREAM_LABEL=""
