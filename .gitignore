@@ -13,8 +13,10 @@ generated-src/
 .kotlin
 *.jks
 
-# 本地抓包与调研资料（体积大、含个人会话数据，不入库）
-/har/
+# 本地非仓库内容都收在 .local/ 下：技术档案 docs/、抓包 har/、产物快照 out/、
+# 签名材料 signing/、归档 _attic/、本地手册 说明文档.md
+# （原先散在仓库上一级目录，2026-10-07 起统一移入本目录）
+/.local/
 
 # 本地跑 .github/scripts/ 下的发布脚本产生的中间物
 __pycache__/
