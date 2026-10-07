@@ -6,7 +6,7 @@
 #   - sync-upstream.yml 每日 rebase 后推送 personal，同样走这条 push 链路
 # 因此"改了代码 push 完却收不到更新"不会再发生。
 #
-# 与上游 build_push.yml 的区别（详细设计记录在本地工作区 docs/，不入 Git）：
+# 与上游 build_push.yml 的区别（详细设计记录在本地 .local/docs/，不入 Git）：
 #   1. 上游的 upload-artifact / publish 都带 `github.repository == 'keiyoushi/extensions-source'`
 #      守卫，在 fork 上会被跳过，下载不到产物。此处不加守卫。
 #   2. 若已配置签名 secret（SIGNING_KEY 等），用其签名并产出稳定的 release 包；
