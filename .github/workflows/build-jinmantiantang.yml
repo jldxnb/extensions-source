@@ -19,7 +19,8 @@
 #      否则同一次同步会出现两条构建（push + workflow_call）抢同一个 concurrency 组、
 #      互相取消，还会把父 sync run 显示成 cancelled。
 #   5. 版本号完全跟随上游 Jinmantiantang 模块：
-#      a) verify-login.py —— 校验登录功能是否仍完整插桩；
+#      a) verify-login.py —— 校验上游的账号登录链路仍在（凭据设置项 + login 接口 + 401 重登）；
+#         个人那张 cookie 登录网已随上游 #20502 下线（见文件头注释与 .local/docs）；
 #      b) verify-upstream-version.py module —— 构建前要求 personal 模块的 versionCode /
 #         libVersion 与 origin/main（官方镜像）完全一致，不允许个人提交改版本号；
 #      c) verify-upstream-version.py artifact —— 构建后要求产物版本与同一上游值一致。
@@ -93,8 +94,9 @@ jobs:
           ref: personal
           persist-credentials: false
 
-      # 关卡①：fork 自己加的登录功能是否还完整挂在扩展上（失败即中止，不构建不发布）
-      - name: Verify login feature intact
+      # 关卡①：上游的「填账号密码 → 保持登录」链路是否还完整。个人登录实现已于 2026-10-29
+      # 下线（上游 #20502 改为 App API 后 cookie 登录失效），这里守的是上游契约不被悄悄改掉。
+      - name: Verify account login intact
         run: python3 .github/scripts/verify-login.py
 
       # 关卡②：模块版本必须与官方 main 完全一致；personal 只允许有功能补丁。
