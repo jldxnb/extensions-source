@@ -1,19 +1,29 @@
 #!/usr/bin/env python3
-"""构建前校验：fork 自己加的「账号登录」是否仍然完整挂在扩展上。
+"""构建前校验：`src/zh/jinmantiantang` 的「账号密码登录 + 保持登录」是否仍然可用。
 
 为什么需要这一步
 ----------------
-上游会改动 `src/zh/jinmantiantang/Jinmantiantang.kt`。只要上游的改动和我们的插桩
-不在同一处，git 就会**静默自动合并成功**——构建照样通过，但挂载点可能被挤掉或
-被重复插入，于是发布出一个「没有登录功能」的版本，而且没有任何信号。
-（真正的冲突反而安全：sync-upstream 会 abort 整个合并，上一版继续可用。）
+本 fork 的登录功能一度是自己的实现（`Auth.kt`：网站 `/login` + cookie）。
+上游 `#19278`（2026-09-25）起自带账号登录，`#20484`（2026-10-28）改为首个请求即登录 +
+会话失效自愈，`#20502`（2026-10-30）又把整个模块改成 App API（JWT + 401 重登），
+于是个人那套基于网站 cookie 的实现被彻底架空——新代码不再访问网站，登录永远不生效。
+2026-10-29 起个人登录实现已下线，登录完全交给上游：
+
+    设置页填「用户名 / 密码」→ `preferences.credentials` → `apiPost(apiUrl("login"))`
+    → 返回带 `jwttoken` 的 MemberDto 缓存在 `session`，401 时 `withLogin` 自动重登。
+
+这段能力是上游私有实现，**没有对外契约**。上游哪天删掉凭据设置项、改掉登录接口或
+挪走 401 重试，扩展就会变成一个"填了密码也登不上"的版本，而构建照样成功、发布照样通过。
+本脚本把这条链路的关键锚点钉住，让这种退化变成一次红灯。
 
 检查项
 ------
-1. `Auth.kt` 仍然存在，且包含 AuthManager / login() / intercept() / addAuthPreferences()
-2. `Auth.kt` 的三个偏好键常量仍在（改了键名会导致老用户凭据"消失"）
-3. `Jinmantiantang.kt` 中 AuthManager 的构造与拦截器挂载各**恰好 1 处**（0 = 被挤掉，2 = 被重复插入）
-4. 原有的镜像自愈与图片还原拦截器仍在链上（避免上游重构 client 时把整条链换掉）
+1. 设置页仍有「用户名 / 密码」两项（`key = USERNAME_PREF` / `key = PASSWORD_PREF`）
+2. `Preferences.kt` 的凭据键与 `credentials` 扩展仍在（键名一改，老用户凭据当场"消失"）
+3. 登录接口与请求封装仍在（`login()` + `apiPost(apiUrl("login"))`）
+4. 会话保持仍在：登录去重（`loginMutex`）、会话缓存（`member()`）、401 重登（`withLogin`）
+5. `MemberDto.jwttoken` 仍在（收藏夹/签到都靠它带 Authorization）
+6. `Auth.kt` **不得**复活：个人 cookie 登录已下线，重新出现即说明有人把废弃实现搬了回来
 
 退出码：0 = 通过；1 = 有锚点缺失/重复（调用方应中止构建与发布）
 
@@ -37,23 +47,30 @@ def _configure_stdout() -> None:
 _configure_stdout()
 
 PKG_REL = "src/zh/jinmantiantang/src/eu/kanade/tachiyomi/extension/zh/jinmantiantang"
-AUTH_FILE = "Auth.kt"
 MAIN_FILE = "Jinmantiantang.kt"
+PREFS_FILE = "Preferences.kt"
+DTO_FILE = "Dto.kt"
+RETIRED_FILE = "Auth.kt"
 
 # (文件, 关键片段, 期望出现次数, 说明)
 CHECKS: list[tuple[str, str, int, str]] = [
-    (AUTH_FILE, "internal class AuthManager(", 1, "AuthManager 类"),
-    (AUTH_FILE, "fun login()", 1, "登录请求实现"),
-    (AUTH_FILE, "fun intercept(chain: Interceptor.Chain): Response", 1, "请求拦截与自愈"),
-    (AUTH_FILE, "internal fun addAuthPreferences(", 1, "账号设置项"),
-    (AUTH_FILE, 'internal const val USERNAME_PREF = "jmUsername"', 1, "偏好键 USERNAME_PREF"),
-    (AUTH_FILE, 'internal const val PASSWORD_PREF = "jmPassword"', 1, "偏好键 PASSWORD_PREF"),
-    (AUTH_FILE, 'internal const val LOGGED_IN_HOST_PREF = "jmLoggedInHost"', 1, "偏好键 LOGGED_IN_HOST_PREF"),
-    (AUTH_FILE, "private const val LOGIN_ERROR_PATH", 1, "会话失效判据常量"),
-    (MAIN_FILE, "= AuthManager(", 1, "主类中构造 AuthManager"),
-    (MAIN_FILE, "authManager.intercept(chain)", 1, "把登录拦截器挂到 client 链上"),
-    (MAIN_FILE, "addAuthPreferences(screen, preferences)", 1, "设置页接入账号设置项"),
-    (MAIN_FILE, "interceptors().add(0, updateUrlInterceptor)", 1, "镜像自愈拦截器仍在链上"),
+    # —— 设置页：用户能填账号密码 ——
+    (MAIN_FILE, "key = USERNAME_PREF", 1, "设置页用户名项"),
+    (MAIN_FILE, "key = PASSWORD_PREF", 1, "设置页密码项"),
+    # —— 凭据读取 ——
+    (PREFS_FILE, 'internal const val USERNAME_PREF = "username"', 1, "偏好键 username"),
+    (PREFS_FILE, 'internal const val PASSWORD_PREF = "password"', 1, "偏好键 password"),
+    (PREFS_FILE, "internal val SharedPreferences.credentials", 1, "凭据读取扩展"),
+    (MAIN_FILE, "preferences.credentials", 1, "主类读取凭据"),
+    # —— 登录接口 ——
+    (MAIN_FILE, "private suspend fun login(", 1, "登录请求实现"),
+    (MAIN_FILE, 'apiPost(apiUrl("login")', 1, "登录接口调用"),
+    (DTO_FILE, "val jwttoken: String? = null", 1, "登录返回的 JWT 字段"),
+    # —— 保持登录：去重 + 缓存 + 401 重登 ——
+    (MAIN_FILE, "private val loginMutex = Mutex()", 1, "登录去重锁"),
+    (MAIN_FILE, "private suspend fun member(", 1, "会话缓存入口"),
+    (MAIN_FILE, "private suspend inline fun <reified T> withLogin(", 1, "会话失效后重登重试"),
+    # —— 客户端链完整性（避免上游重构时把整条链换掉）——
     (MAIN_FILE, "addInterceptor(ScrambledImageInterceptor)", 1, "图片还原拦截器仍在链上"),
 ]
 
@@ -76,7 +93,7 @@ def main() -> int:
 
     texts: dict[str, str] = {}
     failures: list[str] = []
-    for name in (AUTH_FILE, MAIN_FILE):
+    for name in (MAIN_FILE, PREFS_FILE, DTO_FILE):
         path = pkg_dir / name
         if not path.is_file():
             failures.append(f"{name} 不存在：{path}")
@@ -89,12 +106,16 @@ def main() -> int:
         _report(failures)
         return 1
 
+    retired = pkg_dir / RETIRED_FILE
+    if retired.exists():
+        failures.append(f"{RETIRED_FILE} 重新出现：个人 cookie 登录已下线，不该再与上游实现并存")
+
     print("\n锚点检查：")
     for name, needle, expected, label in CHECKS:
         found = find_matches(texts[name], needle)
         ok = len(found) == expected
         mark = "ok  " if ok else "FAIL"
-        print(f"  [{mark}] {name:22s} {label:28s} 期望 {expected} 处，实际 {len(found)} 处 {found}")
+        print(f"  [{mark}] {name:20s} {label:22s} 期望 {expected} 处，实际 {len(found)} 处 {found}")
         if not ok:
             if not found:
                 failures.append(f"{name}: 缺少 {label}（`{needle}` 未找到）")
@@ -105,7 +126,7 @@ def main() -> int:
         _report(failures)
         return 1
 
-    print("\n✅ 登录功能锚点完整")
+    print("\n✅ 上游账号登录链路完整（填账号密码 → 保持登录）")
     return 0
 
 
@@ -116,9 +137,8 @@ def _report(failures: list[str]) -> None:
     for msg in failures:
         print(f"  - {msg}")
     print(
-        "\n处理方式：这通常意味着上游改写了 Jinmantiantang.kt 或 Auth.kt，"
-        "把我们的插桩挤掉或重复插入了。请人工核对登录契约与实现。"
-        "§14.7.3 与 §14.8 的 4 个挂载点后重试——本次不会构建、不会发布，"
+        "\n处理方式：这通常意味着上游改写了登录链路（设置项、凭据键、login 接口或 401 重试）。"
+        "请对照上游最新实现核对锚点，更新本脚本后重试——本次不会构建、不会发布，"
         "repo 分支上仍是上一个可用版本。"
     )
     print(f"::error title=登录功能锚点校验失败::{summary}")
